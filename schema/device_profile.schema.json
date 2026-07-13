@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensign.local/schema/device_profile.schema.json",
+  "title": "OpenSign device profile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "panel_id",
+    "protocol_family",
+    "confidence",
+    "dimensions",
+    "connection",
+    "capabilities",
+    "protocol",
+    "evidence",
+    "unknowns"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "panel_id": {"type": "string", "minLength": 1},
+    "device_id": {"type": ["string", "null"]},
+    "advertised_name": {"type": ["string", "null"]},
+    "protocol_family": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "dimensions": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "source": {"type": "string"},
+        "verified": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "advertisement": {"type": "object"},
+    "services": {"type": "array"},
+    "characteristics": {"type": "array"},
+    "write_characteristic": {"type": ["string", "null"]},
+    "notify_characteristic": {"type": ["string", "null"]},
+    "characteristic_candidates": {
+      "type": "object",
+      "properties": {
+        "write": {"type": "array"},
+        "notify": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "connection": {
+      "type": "object",
+      "required": ["maximum_chunk_size", "inter_chunk_delay_ms", "write_with_response"],
+      "properties": {
+        "mtu": {"type": ["integer", "null"], "minimum": 1},
+        "maximum_chunk_size": {"type": ["integer", "null"], "minimum": 1},
+        "inter_chunk_delay_ms": {"type": "number", "minimum": 0},
+        "write_with_response": {"type": "boolean"},
+        "reconnect_policy": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {"type": "object"},
+    "protocol": {
+      "type": "object",
+      "required": ["codec", "status", "encryption", "commands", "frame_transfer"],
+      "properties": {
+        "codec": {"type": "string"},
+        "status": {"enum": ["unverified", "experimental", "verified", "rejected"]},
+        "encryption": {"type": "object"},
+        "commands": {"type": "object"},
+        "frame_transfer": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "hardware": {"type": "object"},
+    "evidence": {"type": "array", "items": {"type": "object"}},
+    "unknowns": {"type": "array", "items": {"type": "string"}},
+    "timestamps": {"type": "object"}
+  },
+  "additionalProperties": true
+}

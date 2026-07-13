@@ -1,0 +1,223 @@
+Seedscript module description language 2.3
+
+Module("CoolLEDXDiscovery") {
+  description: "Discover a CoolLEDX BLE sign without writing to it: scan advertisements (capturing the name that only appears briefly at power-on), decode the manufacturer data into MAC, geometry and color mode, enumerate the GATT database, and build an evidence-backed device profile. Grounded in a live session that found panel ff:00:00:06:6f:82 (64x16, 7-color) whose name 'CoolLEDX' was only advertised for a few seconds after power-up."
+  metaphor: "A naturalist quietly cataloguing a shy creature by its markings, never touching it."
+  version: "2.3"
+  tags: ['ble', 'coolledx', 'discovery', 'read-only', 'evidence']
+  theme: {
+    visual_style: "nature",
+    color_palette: ['#1b4332', '#2d6a4f', '#74c69d'],
+    metaphorical_language: "field naturalist cataloguing markings"
+  }
+
+  components: {
+    Roots {
+      Directive("/scan_panels") {
+        description: "Scan BLE advertisements and rank CoolLED-family candidates without connecting."
+        metaphor: "Watching the treeline through binoculars."
+        parameters: {
+          name_filters: { type: "array[string]", description: "Advertised-name candidates, e.g. CoolLEDX, CoolLEDM.", required: false, default: ["CoolLEDX", "CoolLEDM"] },
+          timeout: { type: "float", description: "Scan window in seconds.", required: false, default: 10.0 },
+          include_unknown: { type: "bool", description: "Include devices that do not match the name filters.", required: false, default: false }
+        }
+        actions: { observe: "capture_transient_names", rank: "classify_advertisement" }
+        kernel: "DiscoveryKernel"
+        tags: ["entry", "read-only"]
+      }
+
+      Directive("/inspect_device") {
+        description: "Connect read-only to one device, enumerate its GATT database and safe-read characteristics, and emit a device-profile candidate."
+        metaphor: "Approaching close enough to read the tags, then stepping back."
+        parameters: {
+          identifier: { type: "string", description: "BLE address / platform UUID / advertised name.", required: true },
+          timeout: { type: "float", description: "Connection timeout in seconds.", required: false, default: 15.0 }
+        }
+        actions: { enumerate: "enumerate_gatt", profile: "build_device_profile" }
+        kernel: "DiscoveryKernel"
+        tags: ["entry", "read-only"]
+      }
+    }
+
+    Bloom {
+      Function("capture_transient_names") {
+        description: "Run a continuous detection-callback scan that keeps the most informative name ever seen per device, so a name that only appears for a few seconds at power-on is not lost when the device re-advertises without it."
+        metaphor: "Noting the first flash of plumage before it hides again."
+        input_parameters: {
+          seconds: { type: "float", description: "How long to keep the scanner running.", required: true },
+          match: { type: "array[string]", description: "Substrings to flag on sight (e.g. coolled).", required: false }
+        }
+        output_format: {
+          devices: "array[object] Per-device best name, rssi, service_uuids, manufacturer_ids, first_seen."
+        }
+        implementation: |
+          def capture_transient_names(seconds, match):
+              seen = {}
+              def on_adv(device, adv):
+                  entry = seen.setdefault(device.address, {"name": None})
+                  if adv.local_name and not entry["name"]:
+                      entry["name"] = adv.local_name
+                  entry["rssi"] = adv.rssi
+              start_scanner(on_adv)
+              sleep(seconds)
+              stop_scanner()
+              return list(seen.values())
+        tags: ["read-only", "verified-hardware"]
+      }
+
+      Function("classify_advertisement") {
+        description: "Score a candidate from its advertised name and advert contents: exact CoolLEDX/CoolLEDM name is strongest; presence of the FFF0 service and manufacturer data add confidence. Never promotes a guess to certainty."
+        metaphor: "Weighing field marks against the guidebook."
+        input_parameters: {
+          record: { type: "object", description: "Advertisement record (name, service_uuids, manufacturer_data, rssi).", required: true },
+          name_filters: { type: "array[string]", description: "Names to match against.", required: false }
+        }
+        output_format: {
+          confidence: "float 0.0-0.95 capped.",
+          protocol_family: "string e.g. coolledx_candidate.",
+          evidence: "array[string] Human-readable reasons."
+        }
+        implementation: |
+          def classify_advertisement(record, name_filters):
+              confidence, evidence = 0.0, []
+              name = (record.get('local_name') or record.get('name') or '').casefold()
+              for cand in name_filters or ['coolledx', 'coolledm']:
+                  if name == cand.casefold():
+                      confidence = max(confidence, 0.55)
+                      evidence.append('advertised_name_exact:' + cand)
+              if record.get('service_uuids'):
+                  confidence += 0.02
+              return min(round(confidence, 3), 0.95), 'coolledx_candidate', evidence
+        tags: ["pure"]
+      }
+
+      Function("decode_manufacturer_data") {
+        description: "Decode the CoolLEDX manufacturer-data payload into device facts: bytes[0:6]=MAC (ff:00:00:...), [6]=height, [7:9]=width big-endian, [9]=color mode (0 mono,1 seven-color,2 full-rgb), [10]=firmware version. This yields authoritative panel geometry."
+        metaphor: "Reading the maker's stamp pressed into the shell."
+        input_parameters: {
+          value: { type: "bytes", description: "Manufacturer-data value (min 11 bytes).", required: true }
+        }
+        output_format: {
+          mac: "string Colon-separated BLE MAC.",
+          width: "int Pixels.",
+          height: "int Pixels.",
+          color_mode: "int 0/1/2.",
+          firmware: "int Version byte."
+        }
+        implementation: |
+          def decode_manufacturer_data(value):
+              if len(value) < 11:
+                  raise ValueError('manufacturer data too short')
+              mac = ':'.join('%02x' % b for b in value[0:6])
+              height = value[6]
+              width = (value[7] << 8) | value[8]
+              return mac, width, height, value[9], value[10]
+        tags: ["pure", "verified-hardware"]
+      }
+
+      Function("enumerate_gatt") {
+        description: "Connect read-only, list services/characteristics/descriptors, record properties, and safe-read readable characteristics. For CoolLEDX this reveals the single FFF0 service with one FFF1 characteristic (write-without-response + notify + read)."
+        metaphor: "Copying the label without disturbing the specimen."
+        input_parameters: {
+          device: { type: "BLEDevice", description: "Discovered device handle.", required: true },
+          probe_reads: { type: "bool", description: "Read characteristics advertising the read property.", required: false, default: true }
+        }
+        output_format: {
+          services: "array[object] Services with nested characteristics and descriptors.",
+          negotiated: "object mtu and connection facts."
+        }
+        implementation: |
+          def enumerate_gatt(device, probe_reads=True):
+              client = connect(device)
+              services = list_services(client)
+              if probe_reads:
+                  read_safe_characteristics(client, services)
+              disconnect(client)
+              return services, {"mtu": client.mtu_size}
+        tags: ["read-only"]
+      }
+
+      Function("build_device_profile") {
+        description: "Combine advertisement classification, decoded geometry, and the GATT map into a conservative device profile. Records write/notify candidates but only promotes a characteristic on an explicit operator decision."
+        metaphor: "Filing the specimen card with every observation cited."
+        input_parameters: {
+          advertisement: { type: "object", description: "Advertisement record.", required: true },
+          gatt: { type: "object", description: "Enumerated GATT map.", required: true },
+          decoded: { type: "object", description: "Decoded geometry from manufacturer data.", required: false }
+        }
+        output_format: {
+          profile: "DeviceProfile Evidence-backed candidate profile."
+        }
+        implementation: |
+          def build_device_profile(advertisement, gatt, decoded):
+              classification = classify_advertisement(advertisement, None)
+              profile = default_device_profile()
+              apply_geometry(profile, decoded)
+              apply_gatt_candidates(profile, gatt)
+              record_evidence(profile, classification)
+              return profile
+        tags: ["evidence"]
+      }
+    }
+
+    Sprout {
+      Chain("DiscoveryFlow") {
+        description: "Scan -> capture the fleeting name -> classify -> decode geometry from the advert."
+        metaphor: "Spot, identify, and measure without touching."
+        links: [
+          { source: "/scan_panels", target: "capture_transient_names", description: "Keep the power-on name." },
+          { source: "capture_transient_names", target: "classify_advertisement", description: "Rank candidates." },
+          { source: "classify_advertisement", target: "decode_manufacturer_data", description: "Extract MAC and geometry." }
+        ]
+        tags: ["pipe", "read-only"]
+      }
+
+      Chain("ProfileFlow") {
+        description: "Inspect one device -> enumerate GATT -> fold in decoded geometry -> emit a cited profile."
+        metaphor: "Read the tags, then write the card."
+        links: [
+          { source: "/inspect_device", target: "enumerate_gatt", description: "List services and characteristics." },
+          { source: "enumerate_gatt", target: "build_device_profile", description: "Assemble the profile." },
+          { source: "decode_manufacturer_data", target: "build_device_profile", description: "Authoritative geometry." },
+          { source: "classify_advertisement", target: "build_device_profile", description: "Confidence and evidence." }
+        ]
+        tags: ["fan-in", "read-only"]
+      }
+    }
+
+    Kernels {
+      Kernel("DiscoveryKernel") {
+        description: "Governs read-only discovery and profile authoring; guarantees the sign is only observed, never driven."
+        metaphor: "The curator who forbids touching the exhibit."
+        directive_chains: ['DiscoveryFlow', 'ProfileFlow']
+        invariants: [
+          "Discovery and inspection never write to a characteristic.",
+          "Panel geometry comes from decoded advertisement manufacturer data, not from assumptions.",
+          "The advertised name is only reliably present in the seconds after power-on; scanning must tolerate its absence.",
+          "A write or notify characteristic is promoted from candidate to active only by an explicit operator decision.",
+          "Every profile field carries an evidence reference and a confidence state."
+        ]
+        tags: ["orchestrator", "read-only", "verified-hardware"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "opensign.hardware_probe -- BLE scan, advertisement decode, GATT enumeration"
+    owns: |
+      - Continuous scanning that captures the transient power-on advertised name.
+      - Advertisement classification and manufacturer-data decoding (MAC, geometry, color mode).
+      - Read-only GATT enumeration and candidate characteristic proposal.
+      - Assembling a first-draft, evidence-cited DeviceProfile (status: unverified/experimental).
+    delegates: |
+      - Promoting candidates to active characteristics and advancing claim status to DeviceProfileLedger.
+      - Any command encoding or writes to CoolLEDXProtocol + GuardedTransport (never here).
+    verified_on_hardware: |
+      - CoolLEDX-DF7D captured post power-cycle; single vendor service FFF0 with FFF1 (write/notify/read).
+      - Manufacturer data decoded to 64x16, 7-color, fw6 -- correcting an earlier 48x12 assumption.
+    open_work: |
+      - Automate the power-cycle capture window (prompt + timed callback scan).
+      - Decode remaining manufacturer-data bytes (unknowns list) and cite them.
+      - Distinguish CoolLEDX firmware variants (fw revision -> codec quirks).
+  }
+}

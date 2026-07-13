@@ -1,0 +1,283 @@
+Seedscript module description language 2.3
+
+Module("DeviceProfileLedger") {
+  description: "The evidence-backed device profile that every other module reads from: geometry, GATT characteristics, connection parameters, capabilities, and a protocol section whose commands and frame_transfer each carry a status and cited evidence. Owns the claim lifecycle (unknown -> unverified -> experimental -> verified, or rejected) and the gate that decides whether a codec may be selected for dry-run versus physical execution. Confidence is capped below certainty on purpose -- a profile records what we have proven, not what we assume."
+  metaphor: "A museum accession register: nothing is displayed as authentic until its provenance is written down and checked."
+  version: "2.3"
+  tags: ['profile', 'evidence', 'contracts', 'layer:contracts', 'governance']
+  theme: {
+    visual_style: "nature",
+    color_palette: ['#3d2b1f', '#6b4f3a', '#a9825c'],
+    metaphorical_language: "museum accession register"
+  }
+
+  components: {
+    Roots {
+      Directive("/load_profile") {
+        description: "Load a device-profile document, validate its structure, and normalize geometry, characteristics, and the protocol section into a DeviceProfile."
+        metaphor: "Opening the accession file for one specimen."
+        parameters: {
+          document: { type: "object|path", description: "Profile JSON or a path to it.", required: true }
+        }
+        actions: { check: "validate_schema", score: "compute_confidence" }
+        kernel: "LedgerKernel"
+        tags: ["entry", "read-only"]
+      }
+
+      Directive("/promote_claim") {
+        description: "Advance one claim (the profile status, a named command, or frame_transfer) along unverified -> experimental -> verified, or mark it rejected -- but only with an attached evidence entry. Verified requires live-hardware evidence."
+        metaphor: "Upgrading a label from 'attributed' to 'authenticated' once the provenance holds."
+        parameters: {
+          claim_path: { type: "string", description: "e.g. protocol.status, protocol.commands.brightness, protocol.frame_transfer.modes.static_image, protocol.frame_transfer.modes.stored_animation.", required: true },
+          target_status: { type: "string", description: "experimental | verified | rejected.", required: true },
+          evidence: { type: "object", description: "{type, claim, status, source} to append.", required: true }
+        }
+        actions: { cite: "record_evidence", move: "promote_status", derive: "capability_matrix" }
+        kernel: "LedgerKernel"
+        tags: ["entry", "governance"]
+      }
+
+      Directive("/select_codec_gate") {
+        description: "Given a mode (dry-run or physical), decide whether the profile's protocol status and per-claim statuses permit codec selection. Dry-run allows experimental; physical requires verified (or replay_safe experimental where explicitly allowed)."
+        metaphor: "The gatekeeper who checks the register before letting a piece onto the floor."
+        parameters: {
+          mode: { type: "string", description: "dry_run | physical.", required: true }
+        }
+        actions: { gate: "enforce_status_gate", pick: "resolve_characteristics" }
+        kernel: "LedgerKernel"
+        tags: ["entry", "governance"]
+      }
+    }
+
+    Bloom {
+      Function("validate_schema") {
+        description: "Check structural integrity: required fields present, dimensions positive with height a multiple of 8, characteristic UUIDs well-formed, protocol.status in the known set, and every commands/frame_transfer entry carrying a status. Raises on structural violations."
+        metaphor: "Confirming the accession card has every mandatory field."
+        input_parameters: { profile: { type: "object", description: "Raw profile document.", required: true } }
+        output_format: { ok: "bool True if structurally valid.", issues: "array[string] Any violations found." }
+        implementation: |
+          def validate_schema(profile):
+              issues = []
+              w, h = profile['dimensions']['width'], profile['dimensions']['height']
+              if h % 8 != 0:
+                  issues.append('height must be a multiple of 8')
+              if profile['protocol']['status'] not in STATUSES:
+                  issues.append('unknown protocol.status')
+              return (not issues), issues
+        tags: ["pure"]
+      }
+
+      Function("record_evidence") {
+        description: "Append an evidence entry {type, claim, status, source} to the profile. Evidence is additive and never rewritten -- the register keeps the whole provenance trail, including superseded observations."
+        metaphor: "Writing the next line in the provenance log, never erasing a prior one."
+        input_parameters: {
+          claim_path: { type: "string", description: "What the evidence supports.", required: true },
+          evidence: { type: "object", description: "{type, claim, status, source}.", required: true }
+        }
+        output_format: { evidence_count: "int Total entries after appending." }
+        implementation: |
+          def record_evidence(claim_path, evidence):
+              require_keys(evidence, ['type', 'claim', 'status', 'source'])
+              profile['evidence'].append(evidence)
+              return len(profile['evidence'])
+        tags: ["append-only", "evidence"]
+      }
+
+      Function("promote_status") {
+        description: "Apply the transition rules: unverified->experimental needs at least one observed/experimental evidence entry; experimental->verified needs a live_hardware_test evidence entry; anything->rejected is always allowed and is terminal for that claim. Illegal jumps (e.g. unverified->verified) are refused."
+        metaphor: "Only re-labelling a piece once the paperwork earns it."
+        input_parameters: {
+          claim_path: { type: "string", description: "Claim to move.", required: true },
+          target_status: { type: "string", description: "experimental | verified | rejected.", required: true }
+        }
+        output_format: { status: "string The claim's new status.", changed: "bool Whether it moved." }
+        implementation: |
+          def promote_status(claim_path, target_status):
+              current = get_status(claim_path)
+              if not transition_allowed(current, target_status):
+                  raise ValueError(f'illegal {current}->{target_status}')
+              if target_status == 'verified' and not has_hardware_evidence(claim_path):
+                  raise ValueError('verified requires live_hardware_test evidence')
+              set_status(claim_path, target_status)
+              return target_status, True
+        tags: ["governance", "verified-hardware"]
+      }
+
+      Function("compute_confidence") {
+        description: "Score discovery confidence from advertisement match, service presence, and evidence weight, capped at 0.95. The ceiling is deliberate: a profile never claims certainty from passive observation alone."
+        metaphor: "Rating attribution strength, stopping short of 'proven genuine'."
+        input_parameters: { profile: { type: "object", description: "Profile with advertisement + evidence.", required: true } }
+        output_format: { confidence: "float 0.0-0.95." }
+        implementation: |
+          def compute_confidence(profile):
+              score = 0.0
+              if exact_name_match(profile): score += 0.55
+              if profile['advertisement'].get('service_uuids'): score += 0.02
+              score += 0.02 * count_observed_evidence(profile)
+              return min(round(score, 3), 0.95)
+        tags: ["pure"]
+      }
+
+      Function("resolve_characteristics") {
+        description: "Promote a write/notify characteristic from characteristic_candidates to the active write_characteristic / notify_characteristic. Only an explicit operator decision (or a verified evidence entry) may set the active characteristics; discovery merely proposes candidates."
+        metaphor: "The curator, not the finder, decides what goes on display."
+        input_parameters: {
+          write_uuid: { type: "string|null", description: "Chosen write characteristic.", required: false },
+          notify_uuid: { type: "string|null", description: "Chosen notify characteristic.", required: false }
+        }
+        output_format: {
+          write_characteristic: "string|null Active write UUID.",
+          notify_characteristic: "string|null Active notify UUID."
+        }
+        implementation: |
+          def resolve_characteristics(write_uuid=None, notify_uuid=None):
+              if write_uuid and write_uuid not in candidate_uuids('write'):
+                  raise ValueError('write UUID is not a discovered candidate')
+              profile['write_characteristic'] = write_uuid or profile['write_characteristic']
+              profile['notify_characteristic'] = notify_uuid or profile['notify_characteristic']
+              return profile['write_characteristic'], profile['notify_characteristic']
+        tags: ["governance"]
+      }
+
+      Function("enforce_status_gate") {
+        description: "The gate codec selection relies on: for dry_run, protocol.status must be verified or experimental; for physical, it must be verified (or experimental explicitly marked replay_safe where the caller allows it). Rejected profiles are never selectable."
+        metaphor: "Checking the register before the piece leaves the vault."
+        input_parameters: {
+          mode: { type: "string", description: "dry_run | physical.", required: true }
+        }
+        output_format: { allowed: "bool Whether a codec may be selected.", reason: "string Why or why not." }
+        implementation: |
+          def enforce_status_gate(mode):
+              status = profile['protocol']['status']
+              if status == 'rejected':
+                  return False, 'rejected profiles cannot be selected'
+              allowed = {'verified', 'experimental'} if mode == 'dry_run' else {'verified'}
+              return status in allowed, f'status={status} mode={mode}'
+        tags: ["governance"]
+      }
+
+      Function("capability_matrix") {
+        description: "Derive the capabilities block from each claim's own status, so consumers can feature-detect without parsing the protocol section. A flag is 'usable' by the SAME rule the physical status gate enforces -- verified, or replay_safe experimental -- so a capability is never advertised that could not actually run. static_image and stored_animation are INDEPENDENT claims read from frame_transfer.modes: a verified static upload (0x03) must never flip stored_animation (0x04) true, and an experimental-but-not-replay_safe animation claim stays false until a live 0x04 test. frame_streaming reflects its own claim (rejected here -- no streaming mechanism exists)."
+        metaphor: "Summarizing which exhibits are cleared for viewing, each on its own paperwork, using the same checklist the gatekeeper uses."
+        input_parameters: { profile: { type: "object", description: "Profile with protocol section.", required: true } }
+        output_format: { capabilities: "object Boolean feature flags, one per independent claim." }
+        implementation: |
+          def is_usable(claim):
+              # identical rule to enforce_status_gate: verified, or replay_safe experimental
+              if not claim:
+                  return False
+              status = claim.get('status')
+              return status == 'verified' or (status == 'experimental' and claim.get('replay_safe', False))
+
+          def capability_matrix(profile):
+              cmds = profile['protocol'].get('commands', {})
+              ft = profile['protocol'].get('frame_transfer', {})
+              modes = ft.get('modes', {})
+              return {
+                  'brightness': is_usable(cmds.get('brightness')),
+                  'power': is_usable(cmds.get('power')),
+                  # each frame-transfer mode is judged on its own claim, never inherited:
+                  'static_image': is_usable(modes.get('static_image') or ft),
+                  'stored_animation': is_usable(modes.get('stored_animation')),
+                  'frame_streaming': is_usable(modes.get('frame_streaming')),
+              }
+        tags: ["pure"]
+      }
+
+      Function("derive_display_palette") {
+        description: "Translate the profile's decoded color_mode into the exact display palette the renderer must quantize to, keeping device colour knowledge in the ledger so it never leaks into PixelFramePipeline: mono (0) -> 2 states (off/on); seven-color (1) -> the 8 corners of the RGB cube (black + 7 primaries/secondaries); full-rgb (2) -> 24-bit, which the current 1-bit codec cannot represent and is therefore refused for that codec."
+        metaphor: "Reading the accession card to hand the painter the exact tray of inks."
+        input_parameters: { profile: { type: "object", description: "Profile with hardware.color_mode / frame_transfer.color_mode.", required: true } }
+        output_format: {
+          palette: "array[rgb] Exact colours the panel can show.",
+          wire_color_states: "int Number of distinct colours (2 / 8 / 2^24)."
+        }
+        implementation: |
+          def derive_display_palette(profile):
+              mode = (profile.get('hardware', {}).get('color_mode')
+                      or profile['protocol']['frame_transfer'].get('color_mode'))
+              if mode in ('mono', 0):
+                  return [(0, 0, 0), (255, 255, 255)], 2
+              if mode in ('7color', 'seven_color', 1):
+                  return rgb_cube_corners(), 8      # black + 7 primaries/secondaries
+              raise ValueError(f'color_mode {mode!r} not representable by the 1-bit codec')
+        tags: ["pure", "verified-hardware"]
+      }
+    }
+
+    Sprout {
+      Chain("IngestFlow") {
+        description: "Document -> structural validation -> confidence score."
+        metaphor: "Open the file, check the card, rate the attribution."
+        links: [
+          { source: "/load_profile", target: "validate_schema", description: "Structural integrity." },
+          { source: "validate_schema", target: "compute_confidence", description: "Score discovery confidence (capped)." }
+        ]
+        tags: ["pipe", "read-only"]
+      }
+
+      Chain("PromotionFlow") {
+        description: "Evidence-first status promotion, then re-derive capabilities."
+        metaphor: "Log the provenance, then re-label."
+        links: [
+          { source: "/promote_claim", target: "record_evidence", description: "Append citation first." },
+          { source: "record_evidence", target: "promote_status", description: "Apply transition rules." },
+          { source: "promote_status", target: "capability_matrix", description: "Refresh feature flags." }
+        ]
+        tags: ["pipe", "governance"]
+      }
+
+      Chain("SelectionGate") {
+        description: "Mode -> status gate -> active characteristics."
+        metaphor: "Check the register, then pick what leaves the vault."
+        links: [
+          { source: "/select_codec_gate", target: "enforce_status_gate", description: "Allow or refuse selection." },
+          { source: "enforce_status_gate", target: "resolve_characteristics", description: "Bind the active write/notify UUIDs." }
+        ]
+        tags: ["pipe", "governance"]
+      }
+    }
+
+    Kernels {
+      Kernel("LedgerKernel") {
+        description: "Governs the evidence-before-claim discipline that keeps the whole system honest about what it actually knows."
+        metaphor: "The registrar who refuses to authenticate without provenance."
+        directive_chains: ['IngestFlow', 'PromotionFlow', 'SelectionGate']
+        invariants: [
+          "No claim advances without an appended evidence entry citing a source.",
+          "unverified -> verified cannot be reached in one step; experimental is mandatory.",
+          "verified requires a live_hardware_test evidence entry.",
+          "static_image (0x03) and stored_animation (0x04) are independent claims: a verified static upload never implies verified animation.",
+          "The display palette is derived from the decoded color_mode and handed to the renderer; device colour knowledge never lives in PixelFramePipeline.",
+          "Discovery confidence is capped at 0.95 -- passive observation never yields certainty.",
+          "Active write/notify characteristics are set by explicit decision, not by discovery.",
+          "Physical execution requires a verified protocol status (or explicitly allowed replay_safe experimental).",
+          "Rejected is terminal and always permitted; evidence is append-only and never rewritten."
+        ]
+        tags: ["orchestrator", "governance"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "opensign.contracts -- src/opensign/contracts.py (DeviceProfile), device_profile*.json"
+    owns: |
+      - The profile schema and its validation.
+      - The claim lifecycle: unknown/unverified -> experimental -> verified | rejected.
+      - Append-only evidence entries and capped discovery confidence.
+      - The status gate that codec selection (select_codec allow_experimental) enforces.
+      - Promotion of characteristic candidates to active write/notify UUIDs.
+      - Per-mode frame_transfer governance: static_image (0x03) and stored_animation (0x04) as independent claims.
+      - Deriving the display palette (and wire colour-state count) from the decoded color_mode for the renderer.
+    delegates: |
+      - Producing raw candidates and decoded geometry to CoolLEDXDiscovery.
+      - Encoding/decoding actual bytes to CoolLEDXProtocol.
+      - Physical delivery to GuardedTransport.
+    verified_on_hardware: |
+      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) experimental (reference-driver only, no live 0x04 test); frame_streaming rejected; power/speed/mode experimental.
+    open_work: |
+      - JSON Schema file (schema/device_profile.schema.json) to machine-check profiles in CI.
+      - A promotion CLI/helper that enforces these transitions instead of hand-editing JSON.
+      - Multi-panel registry semantics (several signs, one ledger).
+  }
+}

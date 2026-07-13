@@ -1,0 +1,83 @@
+{
+  "$schema": "schema/device_profile.schema.json",
+  "schema_version": "2.3",
+  "panel_id": "desk-sign",
+  "device_id": null,
+  "advertised_name": null,
+  "protocol_family": "unknown",
+  "confidence": 0.0,
+  "dimensions": {
+    "width": 48,
+    "height": 12,
+    "source": "user_asserted",
+    "verified": false
+  },
+  "advertisement": {
+    "rssi": null,
+    "manufacturer_data": {},
+    "service_data": {},
+    "service_uuids": []
+  },
+  "services": [],
+  "characteristics": [],
+  "write_characteristic": null,
+  "notify_characteristic": null,
+  "characteristic_candidates": {
+    "write": [],
+    "notify": []
+  },
+  "connection": {
+    "mtu": null,
+    "maximum_chunk_size": null,
+    "inter_chunk_delay_ms": 0,
+    "write_with_response": false,
+    "reconnect_policy": "on_failure"
+  },
+  "capabilities": {
+    "brightness": false,
+    "power": false,
+    "static_image": false,
+    "stored_animation": false,
+    "frame_streaming": false,
+    "asset_cache": false
+  },
+  "protocol": {
+    "codec": "capture_required",
+    "status": "unverified",
+    "encryption": {
+      "mode": "unknown",
+      "evidence": []
+    },
+    "commands": {},
+    "frame_transfer": {
+      "status": "unverified",
+      "mode": "unknown"
+    }
+  },
+  "hardware": {
+    "pcb_revision": null,
+    "markings": [],
+    "chipset_candidates": [],
+    "image_references": []
+  },
+  "evidence": [
+    {
+      "type": "user_assertion",
+      "claim": "Panel dimensions are 48x12.",
+      "status": "unverified",
+      "source": "OpenSign/CoolLED SeedScript Module Pack 2.3"
+    }
+  ],
+  "unknowns": [
+    "BLE device identifier",
+    "GATT write and notify characteristics",
+    "packet framing and command identifiers",
+    "session transforms or encryption behavior",
+    "pixel order and native color encoding",
+    "safe transfer pacing and cache behavior"
+  ],
+  "timestamps": {
+    "created_at": null,
+    "updated_at": null
+  }
+}

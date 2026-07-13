@@ -1,0 +1,310 @@
+Seedscript module description language 2.3
+
+Module("CoolLEDXProtocol") {
+  description: "Encode commands for a CoolLEDX BLE LED sign into wire-ready packets. Frames the byte stream (0x01 start, byte-stuffed length+payload, 0x03 end), builds control commands, packs RGB frames into column-major 1-bit R/G/B planes, and splits them into 128-byte checksummed chunks. Emits a delivery flow_control hint (await per-chunk ack) that the generic GuardedTransport honors -- this module owns encoding, not the BLE writes. Verified on physical hardware (panel ff:00:00:06:6f:82, CoolLEDX fw6, 64x16, 7-color) on 2026-07-13."
+  metaphor: "A telegraph operator composing framed messages, marking which ones need a return click before the next is sent."
+  version: "2.3"
+  tags: ['ble', 'coolledx', 'protocol', 'codec', 'layer:protocol', 'verified-hardware']
+  theme: {
+    visual_style: "ocean",
+    color_palette: ['#0c2461', '#1e3799', '#4a69bd'],
+    metaphorical_language: "telegraph over a single wire"
+  }
+
+  components: {
+    Roots {
+      Directive("/encode_control") {
+        description: "Turn a named control command and optional value into one framed packet with an empty flow_control (control commands are not ack-paced)."
+        metaphor: "Composing a short telegram."
+        parameters: {
+          command: { type: "string", description: "One of brightness, power, power_on, power_down, speed, mode, invert.", required: true },
+          value: { type: "number|bool|null", description: "Command argument; brightness accepts 0-100 percent.", required: false }
+        }
+        actions: { encode: "build_control_payload", frame: "frame_payload" }
+        kernel: "TransportKernel"
+        tags: ["entry", "control"]
+      }
+
+      Directive("/encode_frame_bundle") {
+        description: "Turn a rendered RGB888 frame bundle into framed, chunked packets (image opcode 0x03 for one frame, animation 0x04 for many) and attach a per-packet await-ack flow_control hint. Preflights the frame count and payload size against the encoding's hard limits and collapses the bundle's cadence to the device's single global speed, rejecting an over-budget bundle rather than truncating it."
+        metaphor: "Weighing the book, then breaking it into numbered pages that each need a receipt."
+        parameters: {
+          frame_bundle: { type: "FrameBundle", description: "RGB888 frames at exact panel geometry, already quantized to the panel palette.", required: true }
+        }
+        actions: { preflight: "preflight_frame_bundle", pack: "pixel_bitplanes", chunk: "chop_into_chunks", pace: "attach_flow_control" }
+        kernel: "TransportKernel"
+        tags: ["entry", "frame"]
+      }
+
+      Directive("/transfer") {
+        description: "Hand framed packets plus their flow_control hint to the generic GuardedTransport. Dry-run by default; physical writes require an explicit execute flag. This directive is a boundary, not an implementation -- the actual BLE writes and ack handshake live in GuardedTransport."
+        metaphor: "Passing the sealed pages to the operator at the key."
+        parameters: {
+          encoded: { type: "EncodedPayload", description: "Packets + flow_control from an encode directive.", required: true },
+          execute: { type: "bool", description: "When true, perform real BLE writes.", required: false, default: false }
+        }
+        actions: { deliver: "handoff_to_transport" }
+        kernel: "TransportKernel"
+        tags: ["entry", "guarded", "cross-module"]
+      }
+    }
+
+    Bloom {
+      Function("escape_stream") {
+        description: "Byte-stuff the framing-reserved bytes so payload data cannot be confused with frame delimiters: 0x01->02 05, 0x02->02 06, 0x03->02 07 (0x00 passes through)."
+        metaphor: "Insulating the wire where sparks could jump."
+        input_parameters: { data: { type: "bytes", description: "Length+payload before framing.", required: true } }
+        output_format: { escaped: "bytes The stuffed byte string." }
+        implementation: |
+          def escape_stream(data):
+              out = bytearray()
+              for byte in data:
+                  if 0x01 <= byte <= 0x03:
+                      out += bytes([0x02, byte + 0x04])
+                  else:
+                      out.append(byte)
+              return bytes(out)
+        tags: ["pure", "deterministic"]
+      }
+
+      Function("frame_payload") {
+        description: "Wrap a raw payload (command byte + args, or a chunk) as 0x01 || escape(len_be16 || payload) || 0x03."
+        metaphor: "Sealing the telegram in its envelope."
+        input_parameters: { payload: { type: "bytes", description: "Unframed command or chunk bytes.", required: true } }
+        output_format: { frame: "bytes A single wire-ready packet." }
+        implementation: |
+          def frame_payload(payload):
+              extended = len(payload).to_bytes(2, 'big') + payload
+              return bytes([0x01]) + escape_stream(extended) + bytes([0x03])
+        tags: ["pure"]
+      }
+
+      Function("xor_checksum") {
+        description: "Running XOR over all bytes; appended to each frame-transfer chunk header+data."
+        metaphor: "A parity tap the receiver can re-tap to check."
+        input_parameters: { data: { type: "bytes", description: "Chunk header + data.", required: true } }
+        output_format: { checksum: "int One byte 0x00-0xFF." }
+        implementation: |
+          def xor_checksum(data):
+              c = 0
+              for b in data:
+                  c ^= b
+              return c & 0xFF
+        tags: ["pure"]
+      }
+
+      Function("build_control_payload") {
+        description: "Map a control command name to its opcode and argument byte(s): brightness=0x08 (0-100 percent -> 0-255), power/switch=0x09 (01/00), power_on=0x13, power_down=0x12, speed=0x07, mode=0x06, invert=0x0C."
+        metaphor: "Choosing the right coded pulse."
+        input_parameters: {
+          command: { type: "string", description: "Command name.", required: true },
+          value: { type: "number|bool|null", description: "Argument.", required: false }
+        }
+        output_format: { payload: "bytes Opcode followed by argument bytes." }
+        implementation: |
+          def build_control_payload(command, value):
+              if command == 'brightness':
+                  b = round(max(0.0, min(100.0, value)) / 100 * 255)
+                  return bytes([0x08, b])
+              if command in ('power', 'switch', 'on_off'):
+                  return bytes([0x09, 1 if value else 0])
+              if command == 'power_on':
+                  return bytes([0x13])
+              if command == 'power_down':
+                  return bytes([0x12])
+              if command == 'speed':
+                  return bytes([0x07, int(value) & 0xFF])
+              if command == 'mode':
+                  return bytes([0x06, int(value) & 0xFF])
+              if command in ('invert', 'invert_display'):
+                  return bytes([0x0C, 1 if value else 0])
+              raise ValueError(command)
+        tags: ["pure", "verified-hardware"]
+      }
+
+      Function("pixel_bitplanes") {
+        description: "Convert a row-major RGB888 frame into three column-major 1-bit planes (R,G,B); MSB is the top pixel; height must be a multiple of 8."
+        metaphor: "Slicing a picture into three stacks of punch-card columns."
+        input_parameters: {
+          frame: { type: "bytes", description: "width*height*3 RGB bytes.", required: true },
+          width: { type: "int", description: "Panel width in pixels.", required: true },
+          height: { type: "int", description: "Panel height in pixels (multiple of 8).", required: true }
+        }
+        output_format: { planes: "tuple[bytes,bytes,bytes] Column-major R,G,B bit planes." }
+        implementation: |
+          def pixel_bitplanes(frame, width, height):
+              r, g, b = bytearray(), bytearray(), bytearray()
+              tr = tg = tb = 0
+              for x in range(width):
+                  for y in range(height):
+                      o = (y * width + x) * 3
+                      tr = (tr << 1) | (1 if frame[o] > 127 else 0)
+                      tg = (tg << 1) | (1 if frame[o+1] > 127 else 0)
+                      tb = (tb << 1) | (1 if frame[o+2] > 127 else 0)
+                      if y % 8 == 7:
+                          r.append(tr); g.append(tg); b.append(tb)
+                          tr = tg = tb = 0
+              return bytes(r), bytes(g), bytes(b)
+        tags: ["pure", "verified-hardware"]
+      }
+
+      Function("chop_into_chunks") {
+        description: "Split a frame payload into framed 128-byte chunks. Each chunk: opcode || 0x00 || total_len_be16 || chunk_index_be16 || chunk_size_u8 || data || xor, then wrapped by frame_payload."
+        metaphor: "Numbering and sealing each page of a long telegram."
+        input_parameters: {
+          data: { type: "bytes", description: "Full frame payload (header + bit planes).", required: true },
+          opcode: { type: "int", description: "0x03 image or 0x04 animation.", required: true }
+        }
+        output_format: { chunks: "array[bytes] Framed, checksummed chunks in order." }
+        implementation: |
+          def chop_into_chunks(data, opcode):
+              chunks = []
+              total = len(data)
+              for i, start in enumerate(range(0, max(total, 1), 128)):
+                  raw = data[start:start+128]
+                  hdr = bytearray([0x00]) + total.to_bytes(2,'big') + i.to_bytes(2,'big') + bytes([len(raw)]) + raw
+                  hdr.append(xor_checksum(bytes(hdr)))
+                  chunks.append(frame_payload(bytes([opcode]) + bytes(hdr)))
+              return chunks
+        tags: ["verified-hardware"]
+      }
+
+      Function("preflight_frame_bundle") {
+        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. Two hard caps apply: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535), which for 64x16 (384 bytes/frame) caps N at 170. Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected."
+        metaphor: "Weighing the pages before sealing them, refusing a book that will not fit the pouch."
+        input_parameters: {
+          frame_bundle: { type: "FrameBundle", description: "RGB888 frames at panel geometry.", required: true },
+          width: { type: "int", description: "Panel width.", required: true },
+          height: { type: "int", description: "Panel height (multiple of 8).", required: true }
+        }
+        output_format: {
+          ok: "bool True when within budget.",
+          max_frames: "int Frame ceiling for this geometry.",
+          payload_bytes: "int Estimated raw payload before chunking.",
+          speed: "int Single device speed value."
+        }
+        implementation: |
+          def preflight_frame_bundle(frame_bundle, width, height):
+              plane_bytes = 3 * width * (height // 8)
+              n = len(frame_bundle.frames)
+              max_by_count = 255                          # frame_count is one byte
+              max_by_len = (65535 - 27) // plane_bytes    # 16-bit total-length field
+              max_frames = min(max_by_count, max_by_len)  # 170 at 64x16
+              payload = (24 + 2 + plane_bytes) if n == 1 else (27 + plane_bytes * n)
+              if n > max_frames:
+                  raise CodecError(f'{n} frames exceeds ceiling {max_frames} for {width}x{height}')
+              if payload > 65535:
+                  raise CodecError(f'payload {payload} exceeds the 16-bit total-length field')
+              return True, max_frames, payload, collapse_to_single_speed(frame_bundle)
+        tags: ["pure", "guarded"]
+      }
+
+      Function("attach_flow_control") {
+        description: "Attach the delivery pacing hint to a frame-transfer EncodedPayload: {await_ack: true, ack_timeout: <profile.frame_transfer.chunk_ack.timeout_seconds or 2.0>, scope: 'per_packet'}. Control payloads carry an empty flow_control so they are never paced."
+        metaphor: "Stamping 'reply required' on the pages that need a receipt."
+        input_parameters: {
+          payload_type: { type: "string", description: "control | frame_bundle.", required: true }
+        }
+        output_format: { flow_control: "object await_ack / ack_timeout / scope, or empty." }
+        implementation: |
+          def attach_flow_control(payload_type):
+              if payload_type == 'frame_bundle':
+                  return {"await_ack": True, "ack_timeout": ack_timeout_from_profile(), "scope": "per_packet"}
+              return {}
+        tags: ["pure", "verified-hardware"]
+      }
+
+      Function("handoff_to_transport") {
+        description: "Boundary to GuardedTransport: pass packets and flow_control to the generic transport, which chunks to the negotiated write size, writes to FFF1, and (when await_ack) waits for each per-chunk device notification. Returns the transport's TransferResult. No BLE logic lives here."
+        metaphor: "Handing the sealed pages to the operator and waiting for the tally."
+        input_parameters: {
+          encoded: { type: "EncodedPayload", description: "Packets + flow_control.", required: true },
+          execute: { type: "bool", description: "Perform physical writes.", required: false, default: false }
+        }
+        output_format: { transfer: "TransferResult Host-level result with ack telemetry (see GuardedTransport)." }
+        implementation: |
+          def handoff_to_transport(encoded, execute=False):
+              # Delegates to GuardedTransport.send_packets(await_ack=..., ack_timeout=...)
+              return guarded_transport.deliver(encoded, execute=execute)
+        tags: ["cross-module", "guarded"]
+      }
+    }
+
+    Sprout {
+      Chain("ControlEncodeFlow") {
+        description: "Intent -> opcode+args -> framed packet for a control command (no pacing)."
+        metaphor: "Word to code to sealed envelope."
+        links: [
+          { source: "/encode_control", target: "build_control_payload", description: "Resolve opcode and argument bytes." },
+          { source: "build_control_payload", target: "frame_payload", description: "Wrap in framing." },
+          { source: "frame_payload", target: "escape_stream", description: "Byte-stuff reserved bytes." }
+        ]
+        tags: ["pipe"]
+      }
+
+      Chain("FrameEncodeFlow") {
+        description: "Rendered frame -> budget preflight -> bit planes -> numbered, checksummed, framed chunks -> await-ack pacing hint."
+        metaphor: "Weigh the book, then picture to punch-cards to numbered pages marked 'reply required'."
+        links: [
+          { source: "/encode_frame_bundle", target: "preflight_frame_bundle", description: "Assert frame/payload budget; collapse cadence to one speed." },
+          { source: "preflight_frame_bundle", target: "pixel_bitplanes", description: "Pack RGB into 1-bit planes." },
+          { source: "pixel_bitplanes", target: "chop_into_chunks", description: "Header, split, checksum." },
+          { source: "chop_into_chunks", target: "xor_checksum", description: "Per-chunk parity byte." },
+          { source: "chop_into_chunks", target: "frame_payload", description: "Frame each chunk." },
+          { source: "chop_into_chunks", target: "attach_flow_control", description: "Mark per-packet await-ack." }
+        ]
+        tags: ["pipe"]
+      }
+
+      Chain("DeliveryHandoffFlow") {
+        description: "Encoded packets + flow_control -> GuardedTransport (guarded, ack-paced delivery)."
+        metaphor: "Pass to the operator; they tap and listen for each click."
+        links: [
+          { source: "/transfer", target: "handoff_to_transport", description: "Delegate BLE writes and ack handshake." }
+        ]
+        tags: ["cross-module", "guarded"]
+      }
+    }
+
+    Kernels {
+      Kernel("TransportKernel") {
+        description: "Governs CoolLEDX encoding and the pacing contract; owns the wire format and hands delivery to GuardedTransport."
+        metaphor: "The operator who owns the codebook and marks which messages need a receipt."
+        directive_chains: ['ControlEncodeFlow', 'FrameEncodeFlow', 'DeliveryHandoffFlow']
+        invariants: [
+          "Every wire packet is 0x01 || escape(len_be16 || payload) || 0x03.",
+          "Reserved bytes 0x01/0x02/0x03 in payloads are always byte-stuffed via the 0x02 escape.",
+          "Frame transfers are chunked at 128 data bytes with an XOR checksum per chunk.",
+          "Animation payloads are preflighted: frame_count is a single byte (<=255) and the 16-bit total-length field caps the raw payload at 65535 bytes (~170 frames at 64x16); over-budget bundles are rejected, never truncated.",
+          "The device carries one global animation speed; per-frame timing is resampled upstream (PixelFramePipeline) and collapsed to a single speed here, or rejected.",
+          "Input frames must already be quantized to the panel palette; packing is 1 bit per channel (8 wire color states) and does not itself dither.",
+          "Frame-transfer EncodedPayloads carry flow_control.await_ack=true; control payloads carry an empty flow_control.",
+          "This module never performs BLE writes; delivery and the ack handshake belong to GuardedTransport.",
+          "Byte-for-byte encoding of brightness (0x08) and image (0x03) is verified against real hardware; animation (0x04) remains experimental until hardware-confirmed."
+        ]
+        tags: ["orchestrator", "verified-hardware"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "opensign.protocol (codec) -- src/opensign/protocol/codecs/coolledx.py"
+    owns: |
+      - Wire framing and byte-stuffing for CoolLEDX-family signs.
+      - Control opcode table and argument encoding.
+      - Column-major bitplane packing and 128-byte checksummed chunking.
+      - Emitting the delivery flow_control hint on EncodedPayload.
+    delegates: |
+      - All BLE connection, chunking-to-MTU, writes, and the per-chunk ack
+        handshake to GuardedTransport (honors flow_control.await_ack).
+      - Pixel rendering / geometry fitting to PixelFramePipeline.
+    verified_on_hardware: |
+      - Brightness (0x08) visibly changed the panel.
+      - 4-chunk 64x16 image (0x03) acked success per chunk and rendered.
+    open_work: |
+      - Confirm animation opcode (0x04) multi-frame timing on hardware.
+      - Confirm power/switch (0x09) vs power_on (0x13)/power_down (0x12) semantics.
+      - Decode and assert on the ack status byte (0x00 success vs 0x06 checksum error) instead of treating any notification as success.
+      - Explore 7-color vs full-RGB packing beyond the 1-bit threshold.
+  }
+}

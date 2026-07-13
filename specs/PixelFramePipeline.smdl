@@ -1,0 +1,270 @@
+Seedscript module description language 2.3
+
+Module("PixelFramePipeline") {
+  description: "Compile a scene or an animated source (text, static image, GIF/APNG) into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, resample the timeline onto the device's timing model, quantize to the panel's governed palette, and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation is new and not yet hardware-confirmed."
+  metaphor: "A print shop's composing room: set the type, square the plate, and proof it against the original -- but never run the press."
+  version: "2.3"
+  tags: ['coolledx', 'rendering', 'compile', 'animation', 'layer:animation', 'transport-neutral', 'verified-hardware']
+  theme: {
+    visual_style: "fire",
+    color_palette: ['#7f1d1d', '#b91c1c', '#f97316'],
+    metaphorical_language: "letterpress composing room"
+  }
+
+  components: {
+    Roots {
+      Directive("/compile_scene") {
+        description: "Compile text (static or scrolling) or a single static image into a hashed FrameBundle sized to the panel. Pure compilation -- no encoding, no delivery."
+        metaphor: "Setting movable type and proofing the plate."
+        parameters: {
+          scene: { type: "object", description: "Scene: type (text|image) and value.", required: true },
+          width: { type: "int", description: "Panel width.", required: true },
+          height: { type: "int", description: "Panel height.", required: true },
+          palette: { type: "array[rgb]", description: "Target display palette (from the profile color_mode via DeviceProfileLedger).", required: true },
+          options: { type: "object", description: "scroll, fps, fit_mode, foreground, background, dither_mode.", required: false },
+          orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
+        }
+        actions: { render: "render_scene", fit: "fit_and_orient", quantize: "quantize_frame", bundle: "build_frame_bundle" }
+        kernel: "CompileKernel"
+        tags: ["entry", "compile"]
+      }
+
+      Directive("/compile_animation") {
+        description: "Compile an animated source (GIF/APNG, or a supplied frame sequence) into a hashed multi-frame FrameBundle: bounded decode, fit/orient, timeline resample onto the device timing model, palette quantization, and a compile-diagnostics report. No encoding, no delivery."
+        metaphor: "Laying out a numbered sequence of plates and proofing the run."
+        parameters: {
+          source: { type: "AnimatedSource", description: "Path/bytes/Image-sequence for a bounded animated asset.", required: true },
+          width: { type: "int", description: "Panel width.", required: true },
+          height: { type: "int", description: "Panel height.", required: true },
+          palette: { type: "array[rgb]", description: "Target display palette (from the profile color_mode).", required: true },
+          dither_mode: { type: "string", description: "ordered | none | error_diffusion (default ordered for animation).", required: false, default: "ordered" },
+          timeline_policy: { type: "string", description: "resample | strict.", required: false, default: "resample" },
+          max_frames: { type: "int", description: "Hard cap on decoded frames (bounds memory and the codec budget).", required: false, default: 170 },
+          orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
+        }
+        actions: { decode: "decode_animated_source", fit: "fit_and_orient", resample: "resample_timeline", quantize: "quantize_frame", bundle: "build_frame_bundle", report: "compile_diagnostics" }
+        kernel: "CompileKernel"
+        tags: ["entry", "compile", "animation"]
+      }
+    }
+
+    Bloom {
+      Function("render_scene") {
+        description: "Rasterize a text or static-image scene into one or more RGB888 frames sized to the panel. Stays independent of Bluetooth and packet framing."
+        metaphor: "Composing the plate."
+        input_parameters: {
+          scene: { type: "object", description: "Scene: type (text|image) and value.", required: true },
+          width: { type: "int", description: "Panel width.", required: true },
+          height: { type: "int", description: "Panel height.", required: true }
+        }
+        output_format: { frames: "array[Image] One or more rendered RGB frames." }
+        implementation: |
+          def render_scene(scene, width, height):
+              if scene['type'] == 'text':
+                  return render_text(scene['value'], width, height)
+              return [load_image(scene['value'])]
+        tags: ["pure", "transport-neutral"]
+      }
+
+      Function("decode_animated_source") {
+        description: "Bounded decode of an animated source into fully composited RGB frames plus source per-frame durations and loop count. Resolves GIF frame disposal and alpha over a background so every frame is complete, and enforces max_frames and a max decoded-pixel budget so a hostile or huge asset cannot exhaust memory (decompression-bomb guard). Purely transport-neutral."
+        metaphor: "Unrolling a filmstrip frame by frame, refusing a reel that will not fit the bench."
+        input_parameters: {
+          source: { type: "AnimatedSource", description: "Path/bytes/Image-sequence.", required: true },
+          max_frames: { type: "int", description: "Hard cap on frames decoded.", required: false, default: 170 },
+          background: { type: "rgb", description: "Fill for transparent pixels.", required: false }
+        }
+        output_format: {
+          frames: "array[Image] Composited RGB frames.",
+          source_durations_ms: "array[int] Per-frame delays from the source.",
+          loop_count: "int|null Source loop count (0/None = infinite)."
+        }
+        implementation: |
+          def decode_animated_source(source, max_frames=170, background=(0,0,0)):
+              frames, durations = [], []
+              for i, frame in enumerate(iter_frames(source)):   # PIL.ImageSequence
+                  if i >= max_frames:
+                      raise CompileError(f'source exceeds max_frames={max_frames}')
+                  guard_pixel_budget(frame)
+                  frames.append(composite_over(frame.convert('RGBA'), background))
+                  durations.append(frame.info.get('duration', 0))
+              return frames, durations, source_loop_count(source)
+        tags: ["transport-neutral", "bounded-input"]
+      }
+
+      Function("fit_and_orient") {
+        description: "Fit frames to panel geometry (contain/cover/stretch) and apply rotation and flips so the physical orientation matches the design. Runs before quantization so the palette snap sees final pixels."
+        metaphor: "Squaring every plate in the chase."
+        input_parameters: {
+          frames: { type: "array[Image]", description: "Rendered/decoded frames.", required: true },
+          width: { type: "int", description: "Panel width.", required: true },
+          height: { type: "int", description: "Panel height.", required: true },
+          orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
+        }
+        output_format: { frames: "array[Image] Fitted, oriented frames." }
+        implementation: |
+          def fit_and_orient(frames, width, height, orientation):
+              return [apply_orientation(fit_image(f, width, height), orientation) for f in frames]
+        tags: ["pure", "transport-neutral"]
+      }
+
+      Function("resample_timeline") {
+        description: "Map variable source per-frame durations onto the device's single global-speed model. In 'resample' mode it picks one uniform tick and duplicates or drops frames to approximate holds (duplicates consume the frame budget); in 'strict' mode it rejects a source whose timing cannot be represented. It never silently discards timing -- the chosen tick and residual timing error are reported."
+        metaphor: "Re-cutting an uneven filmstrip to a steady frame rate, and writing down exactly what changed."
+        input_parameters: {
+          frames: { type: "array[Image]", description: "Fitted frames.", required: true },
+          source_durations_ms: { type: "array[int]", description: "Per-frame source delays.", required: true },
+          policy: { type: "string", description: "resample | strict.", required: false, default: "resample" }
+        }
+        output_format: {
+          frames: "array[Image] Frames after hold expansion/drop.",
+          frame_durations_ms: "array[int] Uniform per-frame durations.",
+          tick_ms: "int Chosen uniform tick.",
+          timing_error_ms: "int Sum of absolute deviation from the source timeline.",
+          dropped: "int Frames dropped.",
+          duplicated: "int Frames duplicated to preserve holds."
+        }
+        implementation: |
+          def resample_timeline(frames, source_durations_ms, policy='resample'):
+              if policy == 'strict' and not is_uniform(source_durations_ms):
+                  raise CompileError('non-uniform source timing rejected in strict mode')
+              tick = choose_uniform_tick(source_durations_ms)
+              out, dur, dup, drop = expand_holds(frames, source_durations_ms, tick)
+              return out, dur, tick, timing_error(source_durations_ms, dur), drop, dup
+        tags: ["pure"]
+      }
+
+      Function("quantize_frame") {
+        description: "Snap each RGB frame to a supplied target palette (derived from the profile color_mode; e.g. seven-color -> the 8 corners of the RGB cube). Default dithering is a fixed panel-coordinate ordered (Bayer) matrix, which is deterministic and temporally stable across frames that differ only slightly -- avoiding the crawl that frame-local error diffusion causes in animation. Error diffusion is an opt-in mode for single static images. Output pixels are exactly palette colors, so the codec's 1-bit threshold becomes lossless. The palette is an input: this function never reads the wire format."
+        metaphor: "Choosing ink from a fixed tray and stippling with a stencil that never shifts between plates."
+        input_parameters: {
+          frame: { type: "Image", description: "Fitted RGB frame.", required: true },
+          palette: { type: "array[rgb]", description: "Exact display palette to snap to.", required: true },
+          dither_mode: { type: "string", description: "ordered | none | error_diffusion.", required: false, default: "ordered" }
+        }
+        output_format: { frame: "Image RGB frame containing only palette colors." }
+        implementation: |
+          def quantize_frame(frame, palette, dither_mode='ordered'):
+              if dither_mode == 'none':
+                  return snap_nearest(frame, palette)
+              if dither_mode == 'error_diffusion':
+                  return floyd_steinberg(frame, palette)   # static-image quality mode
+              return ordered_dither(frame, palette, matrix=BAYER_4x4)  # panel-anchored, temporally stable
+        tags: ["pure", "transport-neutral"]
+      }
+
+      Function("build_frame_bundle") {
+        description: "Package quantized frames into a transport-neutral FrameBundle with durations, loop mode, per-frame SHA-256 hashes, and a bundle_hash covering geometry, frame bytes, timing, loop policy, palette, and compiler version (for integrity and cache detection). Previews are rendered from the quantized frames so a preview matches what the panel will actually show."
+        metaphor: "Proofing, numbering, and stamping the plates so the proof equals the print."
+        input_parameters: {
+          frames: { type: "array[Image]", description: "Quantized frames.", required: true },
+          frame_durations_ms: { type: "array[int]", description: "Per-frame durations.", required: true },
+          palette: { type: "array[rgb]", description: "Palette the frames were snapped to.", required: true },
+          loop_mode: { type: "string", description: "once | loop | ping_pong.", required: false, default: "loop" }
+        }
+        output_format: {
+          bundle: "FrameBundle Transport-neutral, hashed frame bundle.",
+          bundle_hash: "string Hash over geometry, frames, timing, loop, palette, compiler version."
+        }
+        implementation: |
+          def build_frame_bundle(frames, frame_durations_ms, palette, loop_mode='loop'):
+              bundle = FrameBundle.from_images(frames, frame_durations_ms, loop_mode=loop_mode)
+              bundle.metadata['bundle_hash'] = compute_bundle_hash(bundle, palette, COMPILER_VERSION)
+              return bundle
+        tags: ["pure"]
+      }
+
+      Function("compile_diagnostics") {
+        description: "Assemble an honest report of everything the (necessarily lossy) compile did, so a caller is never surprised by silent adaptation: source duration, chosen tick, output frame count, timing error, dropped/duplicated frames, estimated encoded payload bytes and whether it fits the codec budget, palette, dither mode, and loop adaptation."
+        metaphor: "The proof slip that lists every liberty the composing room took."
+        input_parameters: {
+          bundle: { type: "FrameBundle", description: "Compiled bundle.", required: true },
+          timeline: { type: "object", description: "Output of resample_timeline.", required: true },
+          palette: { type: "array[rgb]", description: "Palette used.", required: true },
+          dither_mode: { type: "string", description: "Dither mode used.", required: true }
+        }
+        output_format: { diagnostics: "object Structured, human-readable compile report." }
+        implementation: |
+          def compile_diagnostics(bundle, timeline, palette, dither_mode):
+              return {
+                  'output_frames': len(bundle.frames),
+                  'tick_ms': timeline['tick_ms'],
+                  'timing_error_ms': timeline['timing_error_ms'],
+                  'dropped': timeline['dropped'], 'duplicated': timeline['duplicated'],
+                  'palette_size': len(palette), 'dither_mode': dither_mode,
+                  'est_payload_bytes': estimate_payload_bytes(bundle),
+              }
+        tags: ["pure", "observability"]
+      }
+    }
+
+    Sprout {
+      Chain("CompileSceneFlow") {
+        description: "Text/static-image scene -> rendered frames -> fitted/oriented -> palette-quantized -> hashed bundle."
+        metaphor: "Compose, square, ink from the tray, and proof the plate."
+        links: [
+          { source: "/compile_scene", target: "render_scene", description: "Rasterize text or load the image." },
+          { source: "render_scene", target: "fit_and_orient", description: "Match panel geometry." },
+          { source: "fit_and_orient", target: "quantize_frame", description: "Snap to the display palette." },
+          { source: "quantize_frame", target: "build_frame_bundle", description: "Bundle, hash, and preview." }
+        ]
+        tags: ["pipe", "transport-neutral"]
+      }
+
+      Chain("CompileAnimationFlow") {
+        description: "Animated source -> bounded decode -> fitted/oriented -> timeline resample -> palette-quantized -> hashed bundle -> diagnostics."
+        metaphor: "Unroll the reel, square each plate, steady the cadence, stipple, proof, and file the slip."
+        links: [
+          { source: "/compile_animation", target: "decode_animated_source", description: "Composite bounded frames + source timing." },
+          { source: "decode_animated_source", target: "fit_and_orient", description: "Match panel geometry." },
+          { source: "fit_and_orient", target: "resample_timeline", description: "Onto the device single-speed model." },
+          { source: "resample_timeline", target: "quantize_frame", description: "Ordered dither to the palette." },
+          { source: "quantize_frame", target: "build_frame_bundle", description: "Bundle, hash, and preview." },
+          { source: "build_frame_bundle", target: "compile_diagnostics", description: "Report the lossy adaptation." }
+        ]
+        tags: ["pipe", "transport-neutral", "animation"]
+      }
+    }
+
+    Kernels {
+      Kernel("CompileKernel") {
+        description: "Governs source-to-bundle compilation; keeps rendering pure and transport-neutral and hands off exactly one FrameBundle at the bundle boundary."
+        metaphor: "The compositor foreman who owns the plates but never the press."
+        directive_chains: ['CompileSceneFlow', 'CompileAnimationFlow']
+        invariants: [
+          "Compilation emits transport-neutral RGB888 and never imports Bluetooth, packet framing, or device opcodes.",
+          "The target palette is an input (derived by DeviceProfileLedger from the profile color_mode); the compiler never reads the wire format.",
+          "Quantized frames contain only exact palette colors, so the codec's 1-bit threshold is lossless.",
+          "Animation dithering defaults to a panel-anchored ordered matrix for temporal stability; error diffusion is an opt-in static-image mode.",
+          "Variable source timing is resampled onto the device single global speed or rejected in strict mode -- never silently dropped.",
+          "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec budget before hand-off.",
+          "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames.",
+          "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService."
+        ]
+        tags: ["compile", "transport-neutral", "verified-hardware"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "opensign.animation -- src/opensign/animation (studio/preview); PixelAnimationStudio compile helpers"
+    owns: |
+      - Source decoding: text, static image, and bounded animated GIF/APNG (composited, alpha-resolved) frames.
+      - Fit/orient to panel geometry.
+      - Palette-aware quantization + dithering (ordered default for animation; error diffusion opt-in for static).
+      - Timeline resampling onto the device single-speed model, with honest diagnostics.
+      - Transport-neutral FrameBundle assembly with per-frame hashes, a bundle_hash, and quantized previews.
+    delegates: |
+      - Wire encoding (bitplanes, chunking, opcodes, flow_control) to CoolLEDXProtocol.
+      - Delivery, execute gating, tracing, artifact persistence, display confirmation, and the three-truths model to SignControlService.
+      - Palette/color_mode and geometry governance to DeviceProfileLedger.
+    verified_on_hardware: |
+      - Rendering side: 64x16 HELLO (2026-07-13) and COOL displayed via the runtime path.
+      - Animation compilation (decode/resample/quantize) is new and not yet hardware-confirmed (see stored_animation 0x04, experimental).
+    open_work: |
+      - Real GIF/APNG decode with disposal + alpha compositing wired into PixelAnimationStudio (create_animation_bundle).
+      - Dither tuning at 16px tall: nearest vs ordered often reads cleaner than error diffusion; expose the knob.
+      - bundle_hash cache to skip re-transfer when the panel already holds an asset.
+      - Confirm animation cadence once opcode 0x04 timing is hardware-tested.
+  }
+}

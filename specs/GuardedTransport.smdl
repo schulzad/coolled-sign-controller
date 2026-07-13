@@ -1,0 +1,302 @@
+Seedscript module description language 2.3
+
+Module("GuardedTransport") {
+  description: "Device-agnostic BLE delivery for framed packets. Chooses a safe chunk size from the profile, splits packets into ordered chunks, and either produces a byte-exact dry-run plan (execute=false) or connects and writes to the profile's characteristic (execute=true). When the codec's flow_control requests it, waits for the device's per-chunk notification ack before the next packet, and reports host success separately from ack telemetry. Knows nothing about any specific sign's opcodes -- it moves bytes on behalf of a device codec."
+  metaphor: "A dispatch clerk who never reads the letters: counts pages, sends them, and waits for the recipient's signature when the sender marked 'signature required'."
+  version: "2.3"
+  tags: ['ble', 'transport', 'delivery', 'guarded', 'layer:protocol', 'device-agnostic', 'verified-hardware']
+  theme: {
+    visual_style: "ocean",
+    color_palette: ['#0b3d5c', '#12718a', '#3fa7c4'],
+    metaphorical_language: "dispatch clerk with a signature book"
+  }
+
+  components: {
+    Roots {
+      Directive("/plan_delivery") {
+        description: "Dry-run: chunk the packets and return a byte-exact delivery plan with chunk sizes, offsets and delays. Performs no BLE I/O. This is what execute=false yields everywhere in the system."
+        metaphor: "Laying the pages out on the counter without mailing them."
+        parameters: {
+          encoded: { type: "EncodedPayload", description: "Framed packets + flow_control from a device codec.", required: true }
+        }
+        actions: { size: "choose_chunk_size", split: "chunk_packets" }
+        kernel: "DeliveryKernel"
+        tags: ["entry", "dry-run", "read-only"]
+      }
+
+      Directive("/deliver") {
+        description: "Guarded physical delivery: connect, subscribe to notifications, write every chunk, and (when flow_control.await_ack) wait for each per-packet ack. Requires an explicit execute flag from the caller."
+        metaphor: "Actually mailing the pages and collecting signatures."
+        parameters: {
+          encoded: { type: "EncodedPayload", description: "Framed packets + flow_control.", required: true },
+          execute: { type: "bool", description: "Must be true to perform real writes.", required: true },
+          retry_limit: { type: "int", description: "Per-chunk write retries.", required: false, default: 3 }
+        }
+        actions: { open: "connect_and_subscribe", send: "send_packets", close: "disconnect" }
+        kernel: "DeliveryKernel"
+        tags: ["entry", "guarded", "side-effect"]
+      }
+    }
+
+    Bloom {
+      Function("choose_chunk_size") {
+        description: "Pick a conservative write size: profile.connection.maximum_chunk_size if set, else the characteristic's max_write_without_response, else negotiated MTU minus the 3-byte ATT header, else a safe default of 20. Returns the size and its provenance."
+        metaphor: "Deciding how many sheets fit in one envelope."
+        input_parameters: {
+          profile: { type: "DeviceProfile", description: "Active profile.", required: true },
+          characteristic: { type: "GATTCharacteristic|null", description: "Resolved write characteristic, if connected.", required: false }
+        }
+        output_format: {
+          size: "int Bytes per BLE write.",
+          source: "string device_profile | bleak_characteristic_limit | negotiated_mtu_minus_att_header | conservative_ble_default."
+        }
+        implementation: |
+          def choose_chunk_size(profile, characteristic=None):
+              configured = profile.connection.get('maximum_chunk_size')
+              if isinstance(configured, int) and configured > 0:
+                  return configured, 'device_profile'
+              # else fall back to characteristic limit, then mtu-3, then 20
+              return negotiated_or_default(profile, characteristic)
+        tags: ["pure"]
+      }
+
+      Function("chunk_packets") {
+        description: "Split each framed packet into ordered chunks of the chosen size, tagging each with packet_index, chunk_index, offset and inter-chunk delay. A packet smaller than the chunk size becomes a single chunk (the common case for CoolLEDX)."
+        metaphor: "Numbering every sheet so the recipient can reassemble them."
+        input_parameters: {
+          packets: { type: "array[bytes]", description: "Framed packets.", required: true },
+          chunk_size: { type: "int", description: "Max bytes per BLE write.", required: true },
+          delay_ms: { type: "float", description: "Delay applied after each chunk when not ack-paced.", required: false, default: 0.0 }
+        }
+        output_format: { chunks: "array[Chunk] Ordered chunks with packet_index/chunk_index/offset/delay_ms." }
+        implementation: |
+          def chunk_packets(packets, chunk_size, delay_ms=0.0):
+              chunks = []
+              for pi, packet in enumerate(packets):
+                  for ci, off in enumerate(range(0, len(packet), chunk_size)):
+                      chunks.append(Chunk(pi, ci, off, packet[off:off+chunk_size], delay_ms))
+              return chunks
+        tags: ["pure"]
+      }
+
+      Function("connect_and_subscribe") {
+        description: "Resolve the device by address, connect within the timeout, resolve the profile's write characteristic (fail if absent), and if a notify characteristic is configured, subscribe to it so acks are captured. Sets notify_subscribed."
+        metaphor: "Opening the post office window and the signature ledger."
+        input_parameters: {
+          profile: { type: "DeviceProfile", description: "Active profile with device_id and characteristics.", required: true },
+          timeout_seconds: { type: "float", description: "Connection timeout.", required: false, default: 15.0 }
+        }
+        output_format: {
+          connected: "bool True once the link and characteristics are ready.",
+          notify_subscribed: "bool True when the notify channel is active."
+        }
+        implementation: |
+          def connect_and_subscribe(profile, timeout_seconds=15.0):
+              client = bleak_connect(profile.require_device_id(), timeout_seconds)
+              write_char = client.resolve(profile.require_write_characteristic())
+              if profile.notify_characteristic:
+                  client.start_notify(profile.notify_characteristic, on_notification)
+              return client.is_connected, bool(profile.notify_characteristic)
+        tags: ["side-effect", "guarded"]
+      }
+
+      Function("write_chunk_with_retry") {
+        description: "Write one chunk to the characteristic (write-without-response unless the profile requests response), retrying up to retry_limit on transient failure. A permanent failure records a write error and aborts the transfer (host failure, distinct from a missing ack)."
+        metaphor: "Re-posting a sheet that bounced, then giving up if it keeps bouncing."
+        input_parameters: {
+          chunk: { type: "Chunk", description: "The chunk to write.", required: true },
+          retry_limit: { type: "int", description: "Max retries.", required: false, default: 3 }
+        }
+        output_format: {
+          written: "bool True if the write succeeded.",
+          error: "string|null Write failure detail, if any."
+        }
+        implementation: |
+          def write_chunk_with_retry(chunk, retry_limit=3):
+              for attempt in range(retry_limit + 1):
+                  try:
+                      write_gatt_char(write_char, chunk.data, response=response)
+                      return True, None
+                  except Exception as exc:
+                      if attempt >= retry_limit:
+                          return False, str(exc)
+                      sleep(backoff)
+        tags: ["side-effect"]
+      }
+
+      Function("await_ack") {
+        description: "Wait until a new device notification arrives past a baseline count, up to ack_timeout. Race-safe: the notify callback appends then sets an event, and this re-checks the count after clearing so an ack arriving during setup is never missed. A miss is soft -- it returns false, it does not raise."
+        metaphor: "Watching the signature ledger for the next new signature."
+        input_parameters: {
+          baseline: { type: "int", description: "Notification count captured before the packet's final write.", required: true },
+          timeout: { type: "float", description: "Seconds to wait.", required: true }
+        }
+        output_format: { acked: "bool True if a new notification arrived within the timeout." }
+        implementation: |
+          async def await_ack(baseline, timeout):
+              deadline = now() + timeout
+              while len(notifications) <= baseline:
+                  event.clear()
+                  if len(notifications) > baseline:
+                      return True
+                  if now() >= deadline:
+                      return False
+                  await wait_for(event.wait(), deadline - now())
+              return True
+        tags: ["guarded", "verified-hardware"]
+      }
+
+      Function("match_ack") {
+        description: "Decode a device notification into an acknowledgement using an optional codec-supplied decoder carried on flow_control, so the transport stays device-agnostic and never hardcodes opcodes. A decoder yields {index, is_success, is_nak, status} -- for CoolLEDX, status 0x00 = success and 0x06 = checksum error. Without a decoder the transport can only record that *some* notification arrived (status unknown); it must never report that as verified success."
+        metaphor: "Reading the signature to see whether it says 'received' or 'return to sender'."
+        input_parameters: {
+          notification: { type: "bytes", description: "Raw notification from the notify channel.", required: true },
+          expected_index: { type: "int", description: "Packet index awaiting an ack.", required: true },
+          decoder: { type: "callable|null", description: "Codec-supplied ack decoder from flow_control.ack_decoder.", required: false }
+        }
+        output_format: {
+          matched: "bool True if this notification is the ack for expected_index.",
+          is_success: "bool Decoded success (e.g. 0x00).",
+          is_nak: "bool Decoded negative-ack / checksum error (e.g. 0x06).",
+          status: "int|null Raw status byte, or null when undecodable."
+        }
+        implementation: |
+          def match_ack(notification, expected_index, decoder=None):
+              if decoder is None:
+                  return True, False, False, None      # arrived, but status is unknown
+              d = decoder(notification)
+              return (d.index == expected_index), d.is_success, d.is_nak, d.status
+        tags: ["device-agnostic", "guarded"]
+      }
+
+      Function("send_packets") {
+        description: "Orchestrate delivery: chunk packets, write chunks in order, and after each packet either wait for a device ack (when await_ack) or apply the inter-chunk delay. When the codec supplies flow_control.ack_decoder, each packet completes only on a decoded success; a decoded checksum-error (NAK) re-sends that packet up to nak_retry_limit, and an undecodable notification is arrived-but-unverified (never counted as success). Returns a TransferResult separating host success (all writes accepted) from decoded ack telemetry (acks_received / naks / ack_timeouts / nak_retries) and this-call notifications."
+        metaphor: "Mailing all pages, reading each signature, re-posting the ones stamped 'return to sender', and tallying the receipts."
+        input_parameters: {
+          packets: { type: "array[bytes]", description: "Framed packets.", required: true },
+          await_ack: { type: "bool", description: "Wait for a per-packet ack (from flow_control).", required: false, default: false },
+          ack_timeout: { type: "float", description: "Seconds to wait per ack.", required: false, default: 2.0 },
+          retry_limit: { type: "int", description: "Per-chunk write retries.", required: false, default: 3 },
+          nak_retry_limit: { type: "int", description: "Re-sends of a packet whose ack decoded as a checksum error.", required: false, default: 2 }
+        }
+        output_format: {
+          success: "bool Every chunk was written (host-level).",
+          awaited_ack: "bool Whether ack pacing was active.",
+          acks_received: "int Packets whose ack decoded as success (or merely arrived when no decoder).",
+          naks: "int Packets whose ack decoded as a checksum error (0x06).",
+          ack_timeouts: "int Packets whose ack timed out (soft).",
+          nak_retries: "int Packets re-sent after a decoded NAK.",
+          bytes_sent: "int Total bytes written.",
+          notifications: "array[object] Notifications received during this call.",
+          errors: "array[string] Write failures (empty on a clean host transfer)."
+        }
+        implementation: |
+          def send_packets(packets, await_ack=False, ack_timeout=2.0, retry_limit=3, nak_retry_limit=2):
+              size = choose_chunk_size(profile, write_char)[0]
+              decoder = flow_control.get('ack_decoder')      # codec-supplied, optional
+              pace = await_ack and notify_subscribed
+              for pi, packet in enumerate(packets):
+                  for attempt in range(nak_retry_limit + 1):
+                      baseline = len(notifications)
+                      ok, err = write_all_chunks(packet, size, retry_limit)  # per-chunk write_chunk_with_retry
+                      if not ok:
+                          record_error(err); return failure
+                      if not pace:
+                          sleep_interchunk(); break                # unpaced: fire and move on
+                      if not await_ack(baseline, ack_timeout):
+                          ack_timeouts += 1; break                 # soft miss, no ack in time
+                      matched, is_success, is_nak, status = match_ack(latest(), pi, decoder)
+                      if is_nak and attempt < nak_retry_limit:
+                          nak_retries += 1; continue               # re-send this packet
+                      acks_received += 1 if (is_success or status is None) else 0
+                      naks += 1 if is_nak else 0
+                      break
+              return TransferResult(success=host_ok, acks_received=..., naks=..., ack_timeouts=..., nak_retries=...)
+        tags: ["side-effect", "guarded", "verified-hardware"]
+      }
+
+      Function("disconnect") {
+        description: "Stop notifications and close the BLE link, tolerating an already-dropped connection. Always attempted after delivery so a panel is never left with a dangling session."
+        metaphor: "Closing the window and putting away the ledger."
+        input_parameters: {}
+        output_format: { closed: "bool True once the link is released." }
+        implementation: |
+          def disconnect():
+              try:
+                  if notify_subscribed and client.is_connected:
+                      client.stop_notify(notify_char)
+                  if client.is_connected:
+                      client.disconnect()
+              finally:
+                  reset_state()
+        tags: ["side-effect", "idempotent"]
+      }
+    }
+
+    Sprout {
+      Chain("DryRunFlow") {
+        description: "Encoded packets -> chunk size -> byte-exact plan (no I/O)."
+        metaphor: "Lay the numbered pages on the counter."
+        links: [
+          { source: "/plan_delivery", target: "choose_chunk_size", description: "Pick the write size and record why." },
+          { source: "choose_chunk_size", target: "chunk_packets", description: "Split into ordered chunks." }
+        ]
+        tags: ["pipe", "dry-run"]
+      }
+
+      Chain("ExecuteFlow") {
+        description: "Encoded packets -> connect -> ack-paced writes -> disconnect."
+        metaphor: "Open the window, mail every page collecting signatures, close up."
+        links: [
+          { source: "/deliver", target: "connect_and_subscribe", description: "Establish link and notify channel." },
+          { source: "connect_and_subscribe", target: "send_packets", description: "Write chunks with pacing." },
+          { source: "send_packets", target: "write_chunk_with_retry", description: "Per-chunk write with retry." },
+          { source: "send_packets", target: "await_ack", description: "Per-packet ack wait when paced." },
+          { source: "send_packets", target: "disconnect", description: "Always tear the session down." }
+        ]
+        tags: ["loop", "guarded"]
+      }
+    }
+
+    Kernels {
+      Kernel("DeliveryKernel") {
+        description: "Governs guarded, device-agnostic byte delivery; the single choke point between encoded packets and the radio."
+        metaphor: "The postmaster who guarantees the rules of the mail."
+        directive_chains: ['DryRunFlow', 'ExecuteFlow']
+        invariants: [
+          "No physical BLE write happens unless the caller passes execute=true; otherwise a byte-exact dry-run plan is returned.",
+          "The transport never interprets packet contents -- it moves bytes for whatever codec produced them.",
+          "Chunk size is chosen conservatively and its provenance is always recorded.",
+          "Ack pacing is engaged only when the encoded payload's flow_control.await_ack is set and a notify channel is subscribed.",
+          "When the codec supplies an ack decoder, a packet completes only on a decoded success; a decoded checksum-error re-sends that packet (nak_retries), and an undecodable notification is arrived-but-unverified, never success.",
+          "A missing ack is a soft signal (ack_timeouts); host-write success and ack-verified success are reported as distinct signals, so an unverified or NAK-exhausted transfer is never mislabelled ack-verified.",
+          "Large multi-frame animation uploads are serialized per panel and bounded by a transfer deadline with progress and cancellation.",
+          "Host write success, per-chunk ack telemetry, and display confirmation are three separate truths.",
+          "The BLE session is always torn down after a transfer attempt."
+        ]
+        tags: ["orchestrator", "device-agnostic", "verified-hardware"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "opensign.protocol (transport) -- src/opensign/protocol/transport.py, packet.py, runtime.py::_deliver"
+    owns: |
+      - BLE connect / notify subscription / disconnect lifecycle.
+      - Conservative chunk-size selection and packet chunking.
+      - The per-packet ack handshake (count+event, race-safe) driven by flow_control, incl. decoding acks via a codec-supplied decoder and re-sending NAKed packets.
+      - TransferResult telemetry: host success vs acks_received / naks / ack_timeouts / nak_retries.
+      - Serializing per-panel uploads and enforcing a transfer deadline with progress/cancellation for large animations.
+      - Execute gating: DryRunTransport (plan) vs BleakTransport (writes).
+    delegates: |
+      - Packet contents, opcodes, framing, and the flow_control values to the device codec (CoolLEDXProtocol).
+      - Which profile/characteristics to use to DeviceProfileLedger.
+    verified_on_hardware: |
+      - Ack-paced image transfer: acks_received=4, ack_timeouts=0 for a 4-chunk frame.
+      - Standard opensign-send bundle --execute path drives the panel end to end.
+    open_work: |
+      - Wire the codec-supplied ack decoder (CoolLEDXProtocol) into send_packets and exercise NAK re-send on hardware (contract specified here, code pending).
+      - Tune the animation transfer deadline / progress / cancellation for ~500-chunk uploads.
+      - Reconnect policy (profile.connection.reconnect_policy) is declared but not yet exercised.
+  }
+}

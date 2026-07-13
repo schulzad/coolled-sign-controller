@@ -1,0 +1,398 @@
+Seedscript module description language 2.3
+
+Module("SignControlService") {
+  description: "The orchestration layer over one or more registered panels: the SDK runtime and its FastAPI surface, and the sole cross-module orchestrator. Compiles text/image/animation requests into frame bundles (delegating compilation to PixelFramePipeline), drives control commands, and routes everything through ProtocolRuntime (CoolLEDXProtocol + GuardedTransport) with a global execute gate. Bounds animated input before decode. In dry-run it downgrades unverified-codec errors to rendered_only/simulated instead of failing; in execute it surfaces them. Every mutation is traced, artifacts (bundle + preview) are persisted, status is queryable, and host-success / ack-telemetry / display-confirmation are held as three separate truths. This is the seam where humans and automations touch the signs."
+  metaphor: "A stage manager taking cues from the booth: routes every request, keeps the show log, and only lets the real lights fire when the house switch is armed."
+  version: "2.3"
+  tags: ['sdk', 'api', 'orchestration', 'layer:sdk', 'guarded']
+  theme: {
+    visual_style: "fire",
+    color_palette: ['#5b1d1d', '#a12f2f', '#f0803c'],
+    metaphorical_language: "stage manager and show log"
+  }
+
+  components: {
+    Roots {
+      Directive("/register_panel") {
+        description: "Register a device profile under a panel_id (rekeying the profile if an override id is given). Panels are the addressable units all other endpoints target."
+        metaphor: "Adding a fixture to the lighting plot."
+        parameters: {
+          profile: { type: "DeviceProfile|object|path", description: "Verified or candidate profile.", required: true },
+          panel_id: { type: "string|null", description: "Override id; defaults to the profile's own.", required: false },
+          default_settings: { type: "object|null", description: "Per-panel render defaults (orientation, etc).", required: false }
+        }
+        actions: { register: "register_panel" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "registry"]
+      }
+
+      Directive("/play_text") {
+        description: "Render text (static or scrolling) at the panel geometry and play it."
+        metaphor: "Calling a text cue."
+        parameters: {
+          panel_id: { type: "string", description: "Target panel.", required: true },
+          text: { type: "string", description: "Message.", required: true },
+          scroll: { type: "bool", description: "Scroll vs static.", required: false, default: true },
+          execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
+        }
+        actions: { render: "render_bundle", play: "play_bundle" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "playback"]
+      }
+
+      Directive("/play_image") {
+        description: "Fit an image (or base64 image) to the panel and play it as a frame."
+        metaphor: "Calling an image cue."
+        parameters: {
+          panel_id: { type: "string", description: "Target panel.", required: true },
+          image: { type: "Image|string", description: "Image or base64 string.", required: true },
+          fit_mode: { type: "string", description: "contain | cover | stretch.", required: false, default: "contain" },
+          execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
+        }
+        actions: { render: "render_bundle", play: "play_bundle" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "playback"]
+      }
+
+      Directive("/play_animation") {
+        description: "Compile a bounded animated source (GIF/APNG) into a multi-frame bundle at panel geometry and play it. Enforces input bounds (max_frames, max_bytes) before decoding, applies the compile policy (dither_mode, timeline_policy), and surfaces the compile diagnostics alongside delivery."
+        metaphor: "Calling an animated cue -- and refusing a reel that will not fit the bench."
+        parameters: {
+          panel_id: { type: "string", description: "Target panel.", required: true },
+          source: { type: "AnimatedSource|string", description: "GIF/APNG path, bytes, or base64.", required: true },
+          dither_mode: { type: "string", description: "ordered | none | error_diffusion.", required: false, default: "ordered" },
+          timeline_policy: { type: "string", description: "resample | strict.", required: false, default: "resample" },
+          max_frames: { type: "int", description: "Input bound; also clamped to the codec budget.", required: false, default: 170 },
+          execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
+        }
+        actions: { guard: "bound_media_input", render: "render_bundle", play: "play_bundle" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "playback", "animation"]
+      }
+
+      Directive("/play_bundle") {
+        description: "Play a pre-rendered FrameBundle: validate geometry against the panel, persist artifacts, and deliver."
+        metaphor: "Running a prepared cue stack."
+        parameters: {
+          panel_id: { type: "string", description: "Target panel.", required: true },
+          bundle: { type: "FrameBundle", description: "Rendered frames at panel geometry.", required: true },
+          execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
+        }
+        actions: { store: "store_artifacts", play: "play_bundle" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "playback"]
+      }
+
+      Directive("/set_brightness") {
+        description: "Set panel brightness 0-100 percent via a control command."
+        metaphor: "Riding the dimmer."
+        parameters: {
+          panel_id: { type: "string", description: "Target panel.", required: true },
+          percent: { type: "int", description: "0-100.", required: true },
+          execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
+        }
+        actions: { control: "send_control" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "control"]
+      }
+
+      Directive("/set_power") {
+        description: "Turn the panel on or off via a control command."
+        metaphor: "Throwing the fixture's power."
+        parameters: {
+          panel_id: { type: "string", description: "Target panel.", required: true },
+          power: { type: "bool", description: "true=on, false=off.", required: true },
+          execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
+        }
+        actions: { control: "send_control" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "control"]
+      }
+
+      Directive("/status") {
+        description: "Return per-panel state, scheduled jobs, and (with diagnostics) recent trace events and integrations."
+        metaphor: "Reading the show log to the booth."
+        parameters: {
+          panel_id: { type: "string|null", description: "One panel, or all if omitted.", required: false },
+          diagnostics: { type: "bool", description: "Include profile, traces, integrations.", required: false, default: false }
+        }
+        actions: { report: "get_status" }
+        kernel: "OrchestrationKernel"
+        tags: ["entry", "read-only"]
+      }
+    }
+
+    Bloom {
+      Function("register_panel") {
+        description: "Store a PanelState in the registry keyed by panel_id, rekeying the profile document if an override id differs from the profile's own."
+        metaphor: "Pinning the fixture to a channel."
+        input_parameters: {
+          profile: { type: "DeviceProfile|object", description: "Profile to register.", required: true },
+          panel_id: { type: "string|null", description: "Optional override.", required: false }
+        }
+        output_format: { state: "PanelState The registered panel record." }
+        implementation: |
+          def register_panel(profile, panel_id=None):
+              active = as_profile(profile)
+              if panel_id and panel_id != active.panel_id:
+                  active = rekey(active, panel_id)
+              panels[active.panel_id] = PanelState(profile=active)
+              return panels[active.panel_id]
+        tags: ["registry"]
+      }
+
+      Function("resolve_execute") {
+        description: "Pick the effective execute flag: the per-call override when provided, otherwise the runtime's global gate. Centralizes the single decision of whether real writes are permitted."
+        metaphor: "Checking whether the house switch is armed for this cue."
+        input_parameters: {
+          override: { type: "bool|null", description: "Per-call execute, if any.", required: false }
+        }
+        output_format: { execute: "bool Effective decision." }
+        implementation: |
+          def resolve_execute(override=None):
+              return runtime.execute if override is None else override
+        tags: ["pure", "guarded"]
+      }
+
+      Function("render_bundle") {
+        description: "Compile a text, image, or animation request into a FrameBundle at panel geometry, applying merged orientation defaults and quantizing to the palette derived from the profile color_mode (DeviceProfileLedger.derive_display_palette). Delegates all compilation to PixelFramePipeline; performs no encoding and no delivery."
+        metaphor: "Building the gobo before the cue, mixing only inks the fixture can throw."
+        input_parameters: {
+          state: { type: "PanelState", description: "Target panel.", required: true },
+          request: { type: "object", description: "{type: text|image|animation, value, options}.", required: true }
+        }
+        output_format: { bundle: "FrameBundle Frames sized and quantized to the panel." }
+        implementation: |
+          def render_bundle(state, request):
+              studio = PixelAnimationStudio(state.profile.width, state.profile.height)
+              orient = merged_orientation(state)
+              palette, _ = derive_display_palette(state.profile.to_dict())
+              opts = {**request['options'], 'palette': palette, **orient}
+              if request['type'] == 'text':
+                  return studio.create_text_bundle(request['value'], **opts)
+              if request['type'] == 'animation':
+                  return studio.create_animation_bundle(request['value'], **opts)
+              return studio.create_image_bundle(request['value'], **opts)
+        tags: ["cross-module", "transport-neutral"]
+      }
+
+      Function("bound_media_input") {
+        description: "Guard an animated source before it is decoded: enforce a maximum byte size and, from a cheap header probe, a maximum frame count, refusing oversized or frame-bomb assets so a request can never exhaust memory. Runs in the orchestrator so every media entry point shares one bound."
+        metaphor: "Weighing the parcel at the door before it is ever unwrapped."
+        input_parameters: {
+          source: { type: "AnimatedSource|string", description: "Animated asset.", required: true },
+          max_frames: { type: "int", description: "Frame ceiling.", required: false, default: 170 },
+          max_bytes: { type: "int", description: "Byte ceiling.", required: false, default: 2000000 }
+        }
+        output_format: { ok: "bool True when within bounds." }
+        implementation: |
+          def bound_media_input(source, max_frames=170, max_bytes=2_000_000):
+              if byte_size(source) > max_bytes:
+                  raise ValidationError('animated source exceeds max_bytes')
+              if probe_frame_count(source) > max_frames:
+                  raise ValidationError('animated source exceeds max_frames')
+              return True
+        tags: ["pure", "bounded-input", "guarded"]
+      }
+
+      Function("store_artifacts") {
+        description: "When an artifact_dir is configured, persist the frame bundle JSON and a scaled preview (png for one frame, gif for many) under artifact_dir/panel_id/trace_id, and trace their paths."
+        metaphor: "Filing the cue sheet and a thumbnail in the show binder."
+        input_parameters: {
+          panel_id: { type: "string", description: "Panel.", required: true },
+          trace_id: { type: "string", description: "Trace correlation id.", required: true },
+          bundle: { type: "FrameBundle", description: "Bundle to persist.", required: true }
+        }
+        output_format: { artifacts: "object {frame_bundle, preview} paths, or empty." }
+        implementation: |
+          def store_artifacts(panel_id, trace_id, bundle):
+              if artifact_dir is None:
+                  return {}
+              d = artifact_dir / panel_id / trace_id
+              return {"frame_bundle": bundle.save(d/'frame_bundle.json'),
+                      "preview": save_preview(bundle, d/preview_name(bundle))}
+        tags: ["side-effect"]
+      }
+
+      Function("play_bundle") {
+        description: "Validate the bundle geometry against the panel, resolve execute, persist artifacts, and delegate to ProtocolRuntime.upload_frame_bundle. On CodecError: in execute re-raise; in dry-run downgrade to a rendered_only result. Records active_playback, last_delivery and a trace either way."
+        metaphor: "Running the cue, or in a dark rehearsal, just logging what would fire."
+        input_parameters: {
+          panel_id: { type: "string", description: "Panel.", required: true },
+          bundle: { type: "FrameBundle", description: "Bundle at panel geometry.", required: true },
+          execute: { type: "bool|null", description: "Override gate.", required: false }
+        }
+        output_format: {
+          trace_id: "string Correlation id.",
+          delivery_status: "string transferred | dry_run_packet_plan | rendered_only.",
+          delivery: "object ProtocolRuntime result or downgrade."
+        }
+        implementation: |
+          def play_bundle(panel_id, bundle, execute=None):
+              state = require_panel(panel_id)
+              assert_geometry(bundle, state.profile)
+              should = resolve_execute(execute)
+              artifacts = store_artifacts(panel_id, trace_id, bundle)
+              try:
+                  delivery = ProtocolRuntime(state.profile).upload_frame_bundle(bundle, execute=should)
+              except CodecError as exc:
+                  if should: raise
+                  delivery = rendered_only(exc)
+              update_state(state, delivery); return summary
+        tags: ["cross-module", "guarded", "verified-hardware"]
+      }
+
+      Function("send_control") {
+        description: "Resolve execute and delegate a control command (brightness/power) to ProtocolRuntime.send_control. On CodecError: execute re-raises; dry-run downgrades to a simulated result. Updates panel state and traces."
+        metaphor: "Riding a live control, or miming it in rehearsal."
+        input_parameters: {
+          panel_id: { type: "string", description: "Panel.", required: true },
+          command: { type: "string", description: "brightness | power.", required: true },
+          value: { type: "number|bool", description: "Argument.", required: true },
+          execute: { type: "bool|null", description: "Override gate.", required: false }
+        }
+        output_format: {
+          delivery_status: "string transferred | dry_run_packet_plan | simulated.",
+          delivery: "object ProtocolRuntime result or downgrade."
+        }
+        implementation: |
+          def send_control(panel_id, command, value, execute=None):
+              state = require_panel(panel_id)
+              should = resolve_execute(execute)
+              try:
+                  delivery = ProtocolRuntime(state.profile).send_control(command, value, execute=should)
+              except CodecError as exc:
+                  if should: raise
+                  delivery = simulated(exc)
+              update_state(state, delivery); return summary
+        tags: ["cross-module", "guarded", "verified-hardware"]
+      }
+
+      Function("get_status") {
+        description: "Assemble a status snapshot: execute_enabled, per-panel state (optionally including the full profile), scheduled jobs, and with diagnostics the recent trace events and integrations."
+        metaphor: "Reading the current state of every channel back to the booth."
+        input_parameters: {
+          panel_id: { type: "string|null", description: "One panel, or all.", required: false },
+          include_diagnostics: { type: "bool", description: "Add profile/traces/integrations.", required: false, default: false }
+        }
+        output_format: { status: "object execute_enabled, panels, scheduled_jobs, [diagnostics]." }
+        implementation: |
+          def get_status(panel_id=None, include_diagnostics=False):
+              states = [require_panel(panel_id)] if panel_id else list(panels.values())
+              out = {"execute_enabled": runtime.execute,
+                     "panels": [s.to_dict(include_profile=include_diagnostics) for s in states],
+                     "scheduled_jobs": scheduler.snapshot()}
+              return with_diagnostics(out) if include_diagnostics else out
+        tags: ["read-only"]
+      }
+
+      Function("record_trace") {
+        description: "Append a structured, correlated event (validate_request, render_artifacts, ble_delivery, brightness, power, ...) to the trace store so every request is auditable end to end."
+        metaphor: "Writing the next line in the show log."
+        input_parameters: {
+          trace_id: { type: "string", description: "Correlation id.", required: true },
+          step: { type: "string", description: "Event name.", required: true },
+          status: { type: "string", description: "ok | error | skipped | simulated.", required: true },
+          detail: { type: "object", description: "Arbitrary structured fields.", required: false }
+        }
+        output_format: { recorded: "bool True once appended." }
+        implementation: |
+          def record_trace(trace_id, step, status, detail=None):
+              traces.add(trace_id, step, status, **(detail or {}))
+              return True
+        tags: ["append-only", "observability"]
+      }
+    }
+
+    Sprout {
+      Chain("RegistrationFlow") {
+        description: "Register a profile as an addressable panel."
+        metaphor: "Patch the fixture."
+        links: [
+          { source: "/register_panel", target: "register_panel", description: "Store the PanelState." }
+        ]
+        tags: ["registry"]
+      }
+
+      Chain("PlaybackFlow") {
+        description: "Text/image/animation/bundle requests -> (bound) -> compile -> execute gate -> artifacts -> delivery -> trace."
+        metaphor: "From cue call to lights (or to the rehearsal log)."
+        links: [
+          { source: "/play_text", target: "render_bundle", description: "Rasterize text." },
+          { source: "/play_image", target: "render_bundle", description: "Fit image." },
+          { source: "/play_animation", target: "bound_media_input", description: "Bound the media before decode." },
+          { source: "bound_media_input", target: "render_bundle", description: "Compile the animation bundle." },
+          { source: "render_bundle", target: "play_bundle", description: "Deliver the compiled bundle." },
+          { source: "/play_bundle", target: "play_bundle", description: "Deliver a prepared bundle." },
+          { source: "play_bundle", target: "resolve_execute", description: "Decide real vs dry-run." },
+          { source: "play_bundle", target: "store_artifacts", description: "Persist bundle + preview." },
+          { source: "play_bundle", target: "record_trace", description: "Audit the request." }
+        ]
+        tags: ["pipe", "guarded"]
+      }
+
+      Chain("ControlFlow") {
+        description: "Brightness/power requests -> execute gate -> control command -> trace."
+        metaphor: "Ride a control and log it."
+        links: [
+          { source: "/set_brightness", target: "send_control", description: "Brightness command." },
+          { source: "/set_power", target: "send_control", description: "Power command." },
+          { source: "send_control", target: "resolve_execute", description: "Decide real vs dry-run." },
+          { source: "send_control", target: "record_trace", description: "Audit the command." }
+        ]
+        tags: ["pipe", "guarded"]
+      }
+
+      Chain("StatusFlow") {
+        description: "Status request -> snapshot."
+        metaphor: "Read the log back."
+        links: [
+          { source: "/status", target: "get_status", description: "Assemble the snapshot." }
+        ]
+        tags: ["read-only"]
+      }
+    }
+
+    Kernels {
+      Kernel("OrchestrationKernel") {
+        description: "Governs the request lifecycle across panels; the one place the execute gate, geometry validation, and tracing are enforced."
+        metaphor: "The stage manager who owns the house switch and the show log."
+        directive_chains: ['RegistrationFlow', 'PlaybackFlow', 'ControlFlow', 'StatusFlow']
+        invariants: [
+          "Every mutating request resolves a single effective execute flag (call override else global gate).",
+          "Physical writes never happen when the effective execute flag is false.",
+          "In dry-run, an unverified/absent codec downgrades to rendered_only/simulated and never raises; in execute it raises.",
+          "A bundle must match the panel geometry before any encoding or delivery.",
+          "This is the sole cross-module orchestrator: PixelFramePipeline only compiles bundles; encoding and delivery are delegated to CoolLEDXProtocol + GuardedTransport.",
+          "Animated input is bounded (max_frames, max_bytes) before any decode.",
+          "The three truths -- host write success, ack telemetry, and observed display confirmation -- are assembled and recorded here, never conflated.",
+          "Every request is traced with a correlation id, and artifacts are persisted when an artifact_dir is set."
+        ]
+        tags: ["orchestrator", "guarded", "verified-hardware"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "opensign.sdk -- src/opensign/sdk/runtime.py (OpenSignRuntime) + api.py (FastAPI)"
+    owns: |
+      - The panel registry and per-panel state (brightness/power/last_delivery/traces).
+      - The global execute gate and per-call override resolution.
+      - Being the sole cross-module orchestrator: compile (PixelFramePipeline) -> encode (CoolLEDXProtocol) -> deliver (GuardedTransport).
+      - Bounded media ingest for animated sources (max_frames / max_bytes) before decode.
+      - Assembling the three truths: host write success, ack telemetry, and observed display confirmation.
+      - Request tracing, artifact persistence, scheduler and integrations surface.
+      - The HTTP endpoints: /status, /text, /image, /animation, /bundle, /brightness, /power.
+    delegates: |
+      - Compilation (text/image/animation -> hashed, quantized bundle) to PixelFramePipeline, which no longer orchestrates delivery.
+      - Encoding + delivery to ProtocolRuntime -> CoolLEDXProtocol + GuardedTransport.
+      - Profile validity, capability gating, and palette derivation (color_mode) to DeviceProfileLedger.
+    verified_on_hardware: |
+      - The runtime path (upload_frame_bundle / send_control) drove verified brightness and image playback; the API wraps the same runtime.
+    open_work: |
+      - Auth / rate-limiting on the FastAPI surface before any non-local exposure.
+      - Animation playlists (queue multiple stored animations) plus per-animation compile diagnostics surfaced in /status and traces.
+      - Surface ack telemetry (acks_received / naks / ack_timeouts / nak_retries) into /status and traces.
+      - Multi-panel fan-out (one request to many signs).
+  }
+}

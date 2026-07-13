@@ -1,0 +1,16 @@
+{
+  "pack": "OpenSign / CoolLED SeedScript Module Pack",
+  "version": "2.3",
+  "modules": [
+    {"name": "CoolLEDHardwareProbe", "python_package": "opensign.hardware_probe"},
+    {"name": "CoolLEDProtocol", "python_package": "opensign.protocol"},
+    {"name": "PixelAnimationStudio", "python_package": "opensign.animation"},
+    {"name": "OpenSignSDK", "python_package": "opensign.sdk"}
+  ],
+  "principle": [
+    "Hardware evidence -> Device profile",
+    "Scene description -> Rendered frames",
+    "Device profile + frames -> BLE delivery",
+    "API/scheduler -> Orchestration"
+  ]
+}
