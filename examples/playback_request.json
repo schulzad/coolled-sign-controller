@@ -1,0 +1,14 @@
+{
+  "$schema": "../schema/playback_request.schema.json",
+  "request_id": "replace-with-uuid",
+  "panel_id": "desk-sign",
+  "content": {
+    "type": "scene",
+    "value": "system-monitor"
+  },
+  "playback_mode": "replace",
+  "duration_seconds": 0,
+  "priority": 0,
+  "render_options": {},
+  "delivery_options": {}
+}

@@ -1,0 +1,118 @@
+{
+  "pack": "OpenSign / CoolLED Design Specs (SMDL)",
+  "version": "2.3",
+  "smdl_version": "2.3",
+  "description": "Design-level SMDL modules for the OpenSign CoolLED stack. Each module owns one layer of the architecture and declares what it owns vs delegates in its Semantics block, so work can be split cleanly. Complements seedscript/manifest.json (the runtime package pack).",
+  "layers": [
+    "hardware_probe  -> observe the sign, draft a profile",
+    "contracts       -> govern the evidence-backed profile",
+    "protocol/codec  -> encode commands + emit pacing hints",
+    "protocol/transport -> move bytes, honor pacing, gate execute",
+    "animation       -> render scenes to transport-neutral frames",
+    "sdk/api         -> orchestrate panels, execute gate, tracing"
+  ],
+  "modules": [
+    {
+      "module": "CoolLEDXDiscovery",
+      "file": "CoolLEDXDiscovery.smdl",
+      "layer": "hardware_probe",
+      "source": "src/opensign/hardware_probe",
+      "status": "read-only, hardware-verified capture",
+      "delegates_to": ["DeviceProfileLedger", "CoolLEDXProtocol"],
+      "summary": "Scan for the transient power-on name, decode advertisement geometry, enumerate GATT, draft a cited profile. Never writes."
+    },
+    {
+      "module": "DeviceProfileLedger",
+      "file": "DeviceProfileLedger.smdl",
+      "layer": "contracts",
+      "source": "src/opensign/contracts.py (DeviceProfile), device_profile*.json",
+      "status": "governance; brightness + static image (0x03) verified; stored_animation (0x04) experimental; streaming rejected",
+      "delegates_to": ["CoolLEDXDiscovery", "CoolLEDXProtocol", "GuardedTransport"],
+      "summary": "Evidence-first profile lifecycle (unverified -> experimental -> verified | rejected), capped confidence, per-mode frame_transfer governance (static vs animation), palette derivation from color_mode, and the status gate codec selection enforces."
+    },
+    {
+      "module": "CoolLEDXProtocol",
+      "file": "CoolLEDXProtocol.smdl",
+      "layer": "protocol/codec",
+      "source": "src/opensign/protocol/codecs/coolledx.py",
+      "status": "hardware-verified (brightness 0x08, image 0x03); animation 0x04 experimental",
+      "delegates_to": ["GuardedTransport"],
+      "summary": "Wire framing, control opcodes, bitplane packing, 128-byte checksummed chunks, animation preflight (frame/payload budget + single global speed), an ack decoder, and the await-ack flow_control hint. Owns encoding, not writes."
+    },
+    {
+      "module": "GuardedTransport",
+      "file": "GuardedTransport.smdl",
+      "layer": "protocol/transport",
+      "source": "src/opensign/protocol/transport.py, packet.py, runtime.py::_deliver",
+      "status": "hardware-verified (acks_received=4/4 on a frame)",
+      "delegates_to": ["CoolLEDXProtocol", "DeviceProfileLedger"],
+      "summary": "Device-agnostic BLE delivery: chunk sizing, dry-run plan vs writes, race-safe per-packet ack handshake with a codec-supplied ack decoder and NAK re-send, host-success vs ack telemetry, per-panel serialization + transfer deadline, execute gating."
+    },
+    {
+      "module": "PixelFramePipeline",
+      "file": "PixelFramePipeline.smdl",
+      "layer": "animation",
+      "source": "src/opensign/animation (studio/preview)",
+      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile new/unverified",
+      "delegates_to": ["DeviceProfileLedger"],
+      "summary": "Scene or animated source -> RGB888 -> fit/orient -> timeline resample -> palette quantize -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
+    },
+    {
+      "module": "SignControlService",
+      "file": "SignControlService.smdl",
+      "layer": "sdk/api",
+      "source": "src/opensign/sdk/runtime.py + api.py",
+      "status": "hardware-verified via runtime path",
+      "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "GuardedTransport", "DeviceProfileLedger"],
+      "summary": "Sole cross-module orchestrator: panel registry, global execute gate + per-call override, bounded animated-media ingest, three-truths recording (host/ack/display), tracing, artifacts, and the FastAPI endpoints (/status, /text, /image, /animation, /bundle, /brightness, /power)."
+    }
+  ],
+  "data_flow": [
+    "Hardware evidence -> DeviceProfileLedger (governed profile + palette from color_mode)",
+    "Scene or animated source + palette -> PixelFramePipeline (quantized, hashed RGB888 bundle)",
+    "Profile + bundle -> CoolLEDXProtocol (preflight + framed packets + flow_control/ack decoder)",
+    "Packets + flow_control -> GuardedTransport (guarded, ack-paced BLE writes with NAK re-send)",
+    "SignControlService -> the sole orchestrator: compile -> encode -> deliver, with an execute gate and traces"
+  ],
+  "workstreams": [
+    {
+      "id": "W1",
+      "title": "Ack semantics: decode NAK and retry",
+      "modules": ["CoolLEDXProtocol", "GuardedTransport"],
+      "outcome": "Codec supplies an ack decoder; transport distinguishes success (0x00) from checksum error (0x06) and retries a NAKed chunk instead of treating any notification as success."
+    },
+    {
+      "id": "W2",
+      "title": "Profile schema + promotion tooling",
+      "modules": ["DeviceProfileLedger", "CoolLEDXDiscovery"],
+      "outcome": "A JSON Schema for CI validation and a promotion helper that enforces evidence-before-status transitions instead of hand-editing JSON."
+    },
+    {
+      "id": "W3",
+      "title": "Closed-loop display verification",
+      "modules": ["SignControlService", "GuardedTransport"],
+      "outcome": "Wire observed display confirmation (camera/light sensor) into SignControlService's three-truths recording and surface it, plus ack telemetry (acks_received / naks / ack_timeouts / nak_retries), in /status and traces."
+    },
+    {
+      "id": "W4",
+      "title": "Animation + scheduling",
+      "modules": ["CoolLEDXProtocol", "PixelFramePipeline", "SignControlService"],
+      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are now specified; remaining: implement create_animation_bundle, confirm 0x04 multi-frame timing on hardware, and drive scheduler playlists."
+    },
+    {
+      "id": "W5",
+      "title": "API hardening + multi-panel",
+      "modules": ["SignControlService", "GuardedTransport"],
+      "outcome": "Auth/rate-limiting before non-local exposure, reconnect policy exercised, and one request fanning out to many signs."
+    }
+  ],
+  "shared_invariants": [
+    "No physical BLE write occurs unless execute=true; otherwise a byte-exact dry-run plan is produced.",
+    "A claim never advances status without appended evidence citing a source; verified requires live-hardware evidence.",
+    "Host write success, per-chunk ack telemetry, and observed display confirmation are three separate truths.",
+    "Rendering is transport-neutral; only the device codec knows the wire format; only the transport touches the radio.",
+    "PixelFramePipeline compiles bundles only; SignControlService is the sole cross-module orchestrator (compile -> encode -> deliver).",
+    "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device colour knowledge never leaks into compilation.",
+    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted (frame_count <= 255; 16-bit payload cap, ~170 frames at 64x16) and rejected rather than truncated."
+  ]
+}

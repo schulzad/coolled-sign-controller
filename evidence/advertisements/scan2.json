@@ -1,0 +1,436 @@
+{
+  "schema_version": "2.3",
+  "type": "ble_discovery_report",
+  "started_at": "2026-07-13T15:57:32.057950+00:00",
+  "completed_at": "2026-07-13T15:57:44.212876+00:00",
+  "timeout_seconds": 12.0,
+  "name_filters": [
+    "CoolLEDX",
+    "CoolLEDM"
+  ],
+  "include_unknown_devices": true,
+  "device_count": 15,
+  "devices": [
+    {
+      "advertisement": {
+        "device_id": "74C67884-2389-95EC-2D7D-8BEF93AE33A6",
+        "name": null,
+        "local_name": null,
+        "rssi": -74,
+        "manufacturer_data": {
+          "224": "017bca366bf0"
+        },
+        "service_data": {
+          "0000fe9f-0000-1000-8000-00805f9b34fb": "0000000000000000000000000000000000000000"
+        },
+        "service_uuids": [
+          "0000fe9f-0000-1000-8000-00805f9b34fb"
+        ],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac460, identifier = 74C67884-2389-95EC-2D7D-8BEF93AE33A6, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataManufacturerData = {length = 8, bytes = 0xe000017bca366bf0};\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceData =     {\n        FE9F = {length = 20, bytes = 0x0000000000000000000000000000000000000000};\n    };\n    kCBAdvDataServiceUUIDs =     (\n        FE9F\n    );\n    kCBAdvDataTimestamp = \"805651063.068506\";\n}",
+          "-74"
+        ]
+      },
+      "classification": {
+        "confidence": 0.08,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present",
+          "service_data_present",
+          "service_uuids_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "20B49A25-988B-3785-8321-F86369CA2AF9",
+        "name": null,
+        "local_name": null,
+        "rssi": -76,
+        "manufacturer_data": {
+          "224": "0104ca9adefc"
+        },
+        "service_data": {
+          "0000fe9f-0000-1000-8000-00805f9b34fb": "0000000000000000000000000000000000000000"
+        },
+        "service_uuids": [
+          "0000fe9f-0000-1000-8000-00805f9b34fb"
+        ],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac7e0, identifier = 20B49A25-988B-3785-8321-F86369CA2AF9, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataManufacturerData = {length = 8, bytes = 0xe0000104ca9adefc};\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceData =     {\n        FE9F = {length = 20, bytes = 0x0000000000000000000000000000000000000000};\n    };\n    kCBAdvDataServiceUUIDs =     (\n        FE9F\n    );\n    kCBAdvDataTimestamp = \"805651061.5554579\";\n}",
+          "-76"
+        ]
+      },
+      "classification": {
+        "confidence": 0.08,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present",
+          "service_data_present",
+          "service_uuids_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "EBAF6769-D639-8669-39A1-D3ACF876BE2C",
+        "name": "IOTBTA58",
+        "local_name": "IOTBTA58",
+        "rssi": -68,
+        "manufacturer_data": {
+          "23042": "8023256550f0006464000004000a3c4000270a0000010000000005"
+        },
+        "service_data": {
+          "00005a02-0000-1000-8000-00805f9b34fb": "80070865f0ca6a580079240a0111"
+        },
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0x101699990, identifier = EBAF6769-D639-8669-39A1-D3ACF876BE2C, name = IOTBTA58, mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataLocalName = IOTBTA58;\n    kCBAdvDataManufacturerData = {length = 29, bytes = 0x025a8023 256550f0 00646400 0004000a ... 00000100 00000005 };\n    kCBAdvDataRxPrimaryPHY = 1;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceData =     {\n        5A02 = {length = 14, bytes = 0x80070865f0ca6a580079240a0111};\n    };\n    kCBAdvDataTimestamp = \"805651064.014405\";\n}",
+          "-68"
+        ]
+      },
+      "classification": {
+        "confidence": 0.06,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present",
+          "service_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "1E398F0C-B09B-3DBD-B9E4-17A0256E681B",
+        "name": null,
+        "local_name": null,
+        "rssi": -58,
+        "manufacturer_data": {},
+        "service_data": {
+          "0000fcf1-0000-1000-8000-00805f9b34fb": "048ed9bdbb702d059044ae123ed0a488125103f4628c"
+        },
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac1c0, identifier = 1E398F0C-B09B-3DBD-B9E4-17A0256E681B, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataRxPrimaryPHY = 1;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceData =     {\n        FCF1 = {length = 22, bytes = 0x048ed9bdbb702d059044ae123ed0a488125103f4628c};\n    };\n    kCBAdvDataTimestamp = \"805651063.092391\";\n}",
+          "-58"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "service_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "2A8F4905-6234-C3BC-B3AE-A9925E3877BC",
+        "name": null,
+        "local_name": null,
+        "rssi": -64,
+        "manufacturer_data": {},
+        "service_data": {
+          "0000fef3-0000-1000-8000-00805f9b34fb": "4a1723454943371132ec9bc026f216a4af0ebf105a627dcd6a4e02"
+        },
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac9a0, identifier = 2A8F4905-6234-C3BC-B3AE-A9925E3877BC, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceData =     {\n        FEF3 = {length = 27, bytes = 0x4a172345 49433711 32ec9bc0 26f216a4 ... 105a627d cd6a4e02 };\n    };\n    kCBAdvDataTimestamp = \"805651063.673691\";\n}",
+          "-64"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "service_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "ECAB6259-7BD4-9F37-D463-2427EDBB17AC",
+        "name": null,
+        "local_name": null,
+        "rssi": -66,
+        "manufacturer_data": {},
+        "service_data": {
+          "0000fef3-0000-1000-8000-00805f9b34fb": "4a1723574334311132f2a1c9125da1ff26df1bbee6f899ab69c1e5"
+        },
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac540, identifier = ECAB6259-7BD4-9F37-D463-2427EDBB17AC, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceData =     {\n        FEF3 = {length = 27, bytes = 0x4a172357 43343111 32f2a1c9 125da1ff ... bee6f899 ab69c1e5 };\n    };\n    kCBAdvDataTimestamp = \"805651055.862561\";\n}",
+          "-66"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "service_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "D91BA58D-FFFA-5493-C715-BCD8E3C321C8",
+        "name": null,
+        "local_name": null,
+        "rssi": -69,
+        "manufacturer_data": {
+          "117": "021861b16a3039e2a164e8026107a045931e8456adec80a328c60e5db56df33b86"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0x101699380, identifier = D91BA58D-FFFA-5493-C715-BCD8E3C321C8, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataManufacturerData = {length = 35, bytes = 0x75000218 61b16a30 39e2a164 e8026107 ... c60e5db5 6df33b86 };\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651062.454942\";\n}",
+          "-69"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "B9EE1561-71A3-B888-0FEB-9D6B44730131",
+        "name": "Dryer",
+        "local_name": "Dryer",
+        "rssi": -78,
+        "manufacturer_data": {
+          "117": "421f3000002700f0f13733314604020808"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac2a0, identifier = B9EE1561-71A3-B888-0FEB-9D6B44730131, name = Dryer, mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataLocalName = Dryer;\n    kCBAdvDataManufacturerData = {length = 19, bytes = 0x7500421f3000002700f0f13733314604020808};\n    kCBAdvDataRxPrimaryPHY = 1;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651063.406163\";\n}",
+          "-78"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "DEB69DC1-59F8-0BD1-5603-878A0DBB7763",
+        "name": null,
+        "local_name": null,
+        "rssi": -78,
+        "manufacturer_data": {
+          "76": "12020001"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93aca80, identifier = DEB69DC1-59F8-0BD1-5603-878A0DBB7763, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataManufacturerData = {length = 6, bytes = 0x4c0012020001};\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651056.4488339\";\n}",
+          "-78"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "24AB4055-FABD-1C6E-1858-B6AC341889F0",
+        "name": null,
+        "local_name": null,
+        "rssi": -80,
+        "manufacturer_data": {
+          "76": "1006701d1a375f68"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": 8,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac000, identifier = 24AB4055-FABD-1C6E-1858-B6AC341889F0, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataManufacturerData = {length = 10, bytes = 0x4c001006701d1a375f68};\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651063.9795901\";\n    kCBAdvDataTxPowerLevel = 8;\n}",
+          "-80"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "6258139C-4B52-3078-FF95-18A609D5F3F2",
+        "name": null,
+        "local_name": null,
+        "rssi": -80,
+        "manufacturer_data": {
+          "117": "021861b1421030b280e65e40344ab882c53811a1d261d9faab449815ff20cd52a4"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac620, identifier = 6258139C-4B52-3078-FF95-18A609D5F3F2, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataManufacturerData = {length = 35, bytes = 0x75000218 61b14210 30b280e6 5e40344a ... 449815ff 20cd52a4 };\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651061.554052\";\n}",
+          "-80"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "28A4BE9C-EB3B-6791-0BD0-79B1C892AE20",
+        "name": null,
+        "local_name": null,
+        "rssi": -83,
+        "manufacturer_data": {
+          "76": "12020003"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac380, identifier = 28A4BE9C-EB3B-6791-0BD0-79B1C892AE20, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 0;\n    kCBAdvDataManufacturerData = {length = 6, bytes = 0x4c0012020003};\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651059.17296\";\n}",
+          "-83"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "6A6B2805-4CDE-7A98-D6D3-7A1D66A5984F",
+        "name": null,
+        "local_name": null,
+        "rssi": -85,
+        "manufacturer_data": {
+          "76": "10063b1e938365dd"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": 8,
+        "platform_data": [
+          "<CBPeripheral: 0x101698fc0, identifier = 6A6B2805-4CDE-7A98-D6D3-7A1D66A5984F, name = (null), mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataManufacturerData = {length = 10, bytes = 0x4c0010063b1e938365dd};\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651059.477934\";\n    kCBAdvDataTxPowerLevel = 8;\n}",
+          "-85"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "17ED7F00-6C1E-DD59-BBFC-CE8CBBA22169",
+        "name": "95FDB606701F26DC",
+        "local_name": "95FDB606701F26DC",
+        "rssi": -88,
+        "manufacturer_data": {
+          "529": "1102c9770aeb1102c9770aeb8500010100786deb0ff7c900000000000000000000"
+        },
+        "service_data": {},
+        "service_uuids": [],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93acc40, identifier = 17ED7F00-6C1E-DD59-BBFC-CE8CBBA22169, name = 95FDB606701F26DC, mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataLocalName = 95FDB606701F26DC;\n    kCBAdvDataManufacturerData = {length = 35, bytes = 0x11021102 c9770aeb 1102c977 0aeb8500 ... 00000000 00000000 };\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataTimestamp = \"805651063.078035\";\n}",
+          "-88"
+        ]
+      },
+      "classification": {
+        "confidence": 0.03,
+        "protocol_family": "unknown",
+        "evidence": [
+          "manufacturer_data_present"
+        ],
+        "matched_name_filter": null
+      }
+    },
+    {
+      "advertisement": {
+        "device_id": "849929B4-63E0-9242-A039-7E274ED7618D",
+        "name": "SMARTPOWER50_7936",
+        "local_name": "SMARTPOWER50_7936",
+        "rssi": -86,
+        "manufacturer_data": {},
+        "service_data": {},
+        "service_uuids": [
+          "0000180a-0000-1000-8000-00805f9b34fb",
+          "fed61111-ee68-497c-8ead-d9e8c0e20ea1"
+        ],
+        "tx_power": null,
+        "platform_data": [
+          "<CBPeripheral: 0xbb93ac0e0, identifier = 849929B4-63E0-9242-A039-7E274ED7618D, name = SMARTPOWER50_7936, mtu = 0, state = disconnected>",
+          "{\n    kCBAdvDataIsConnectable = 1;\n    kCBAdvDataLocalName = \"SMARTPOWER50_7936\";\n    kCBAdvDataRxPrimaryPHY = 129;\n    kCBAdvDataRxSecondaryPHY = 0;\n    kCBAdvDataServiceUUIDs =     (\n        \"Device Information\",\n        \"FED61111-EE68-497C-8EAD-D9E8C0E20EA1\"\n    );\n    kCBAdvDataTimestamp = \"805651061.576321\";\n}",
+          "-86"
+        ]
+      },
+      "classification": {
+        "confidence": 0.02,
+        "protocol_family": "unknown",
+        "evidence": [
+          "service_uuids_present"
+        ],
+        "matched_name_filter": null
+      }
+    }
+  ]
+}

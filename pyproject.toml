@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opensign-coolled"
+version = "0.1.0"
+description = "Profile-driven discovery, rendering, BLE transport, and local orchestration for CoolLED-compatible signs."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "OpenSign contributors" }]
+keywords = ["bluetooth", "ble", "led", "sign", "coolled", "animation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications",
+  "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+  "bleak>=3.0.2,<4.0",
+  "Pillow>=12.3.0,<13.0",
+]
+
+[project.optional-dependencies]
+api = [
+  "fastapi>=0.139.0,<0.140",
+  "uvicorn[standard]>=0.51.0,<0.52",
+]
+dev = [
+  "pytest>=9.0,<10.0",
+  "ruff>=0.12,<1.0",
+  "httpx>=0.28,<0.29",
+]
+
+[project.scripts]
+coolled = "opensign.cli:main"
+opensign-scan = "opensign.hardware_probe.cli:main"
+opensign-preview = "opensign.animation.preview:main"
+opensign-send = "opensign.protocol.cli:main"
+opensign-api = "opensign.sdk.api_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

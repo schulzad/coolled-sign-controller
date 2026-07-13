@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensign.local/schema/playback_request.schema.json",
+  "title": "OpenSign playback request",
+  "type": "object",
+  "required": ["request_id", "panel_id", "content", "playback_mode", "duration_seconds", "priority"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "panel_id": {"type": "string", "minLength": 1},
+    "content": {
+      "type": "object",
+      "required": ["type", "value"],
+      "properties": {
+        "type": {"type": "string"},
+        "value": {}
+      },
+      "additionalProperties": true
+    },
+    "playback_mode": {"enum": ["replace", "queue", "overlay", "priority"]},
+    "duration_seconds": {"type": "number", "minimum": 0},
+    "priority": {"type": "integer"},
+    "render_options": {"type": "object"},
+    "delivery_options": {"type": "object"}
+  },
+  "additionalProperties": true
+}
