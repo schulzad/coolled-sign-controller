@@ -69,6 +69,30 @@ PAYLOAD_BYTES_MAX = 0xFFFF
 # is the real cap on animation length.
 PIXEL_BYTES_MAX = 30 * 1024  # 30720
 
+# Native text-scroll MODE args (CoolLEDX Mode enum).
+MODE_STATIC = 1
+MODE_LEFT = 2
+MODE_RIGHT = 3
+
+# User-facing scroll speed for CLIs/SDK: 0 (slowest) .. 10 (fastest).
+USER_SCROLL_SPEED_MIN = 0
+USER_SCROLL_SPEED_MAX = 10
+
+
+def map_user_scroll_speed(level: int | float) -> int:
+    """Map a user scroll speed 0..10 to the device SPEED byte 0..255.
+
+    Hardware 2026-07-14: higher 0x07 byte = faster native scroll. Linear map so
+    0 -> 0 and 10 -> 255 (fast but readable on the reference panel).
+    """
+    if isinstance(level, bool) or not isinstance(level, (int, float)):
+        raise CodecError("scroll speed requires a numeric value")
+    if level < USER_SCROLL_SPEED_MIN or level > USER_SCROLL_SPEED_MAX:
+        raise CodecError(
+            f"scroll speed must be {USER_SCROLL_SPEED_MIN}..{USER_SCROLL_SPEED_MAX}, got {level}"
+        )
+    return max(0, min(255, round(float(level) * 255 / USER_SCROLL_SPEED_MAX)))
+
 
 def escape_stream(data: bytes) -> bytes:
     """Byte-stuff 0x01/0x02/0x03 so they cannot be confused with framing bytes."""
@@ -181,6 +205,9 @@ class CoolLEDXCodec:
         elif name == "power_down":
             payload = bytes([OPCODE_POWER_DOWN])
         elif name == "speed":
+            # Native text-scroll rate (opcode 0x07). Hardware 2026-07-14: higher
+            # byte = faster scroll (255 fast but readable). Opposite polarity from
+            # animation coolledx_speed, which is ms/frame (smaller = faster).
             encoded_value = self._byte(value, "speed")
             payload = bytes([OPCODE_SPEED, encoded_value])
         elif name == "mode":
@@ -224,6 +251,75 @@ class CoolLEDXCodec:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise CodecError(f"{field} requires a numeric value")
         return max(0, min(255, int(round(value))))
+
+    # -- native text scroll ------------------------------------------------
+
+    def encode_text_banner(
+        self,
+        text: str,
+        frame: bytes,
+        width: int,
+        *,
+        height: int | None = None,
+    ) -> EncodedPayload:
+        """Encode a pre-rendered wide bitmap as native text scroll (opcode 0x02).
+
+        ``width`` may exceed the panel width -- the device derives banner width from
+        the pixel-byte count. Height must match the panel. Motion/cadence are separate
+        control commands (mode 0x06 / speed 0x07), not part of this payload.
+        """
+        if not text:
+            raise CodecError("native text banner requires a non-empty text string")
+        panel_h = self.height if height is None else height
+        if panel_h != self.height:
+            raise CodecError(f"Text banner height {panel_h} does not match panel {self.height}")
+        if width <= 0:
+            raise CodecError("Text banner width must be positive")
+
+        plane_r, plane_g, plane_b = _pixel_bitplanes(frame, width, panel_h)
+        pixel_bits = bytes(plane_r + plane_g + plane_b)
+
+        raw = bytearray(24)  # reserved (purpose unconfirmed)
+        count = len(text)
+        if count <= 0xFF:
+            raw += bytes([count])
+            buffer = bytearray(80)
+        else:
+            raw += count.to_bytes(2, "big")
+            buffer = bytearray(79)
+        for i in range(min(count, len(buffer))):
+            buffer[i] = 0x30  # reference fills with '0'; the bitmap is what renders
+        raw += buffer
+        raw += len(pixel_bits).to_bytes(2, "big")
+        raw += pixel_bits
+
+        if len(raw) > PAYLOAD_BYTES_MAX:
+            raise CodecError(
+                f"Native text payload is {len(raw)} bytes, over the {PAYLOAD_BYTES_MAX}-byte "
+                f"CoolLEDX chunk-length limit. Shorten the message."
+            )
+
+        packets = _chop_into_chunks(bytes(raw), OPCODE_TEXT)
+        return EncodedPayload(
+            packets=packets,
+            payload_type="text_banner",
+            codec=self.name,
+            expected_response={"channel": "notify", "characteristic": self.profile.notify_characteristic},
+            flow_control={
+                "await_ack": True,
+                "ack_timeout": self._ack_timeout(),
+                "scope": "per_packet",
+            },
+            metadata={
+                "status": self.protocol.get("status"),
+                "opcode": OPCODE_TEXT,
+                "text": text,
+                "banner_width": width,
+                "banner_height": panel_h,
+                "payload_bytes": len(raw),
+                "frame_count": 1,
+            },
+        )
 
     # -- frame transfer ----------------------------------------------------
 

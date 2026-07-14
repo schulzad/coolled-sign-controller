@@ -120,6 +120,54 @@ def test_coolledx_control_framing_matches_hardware() -> None:
     assert codec.encode_control("brightness", 50).flow_control == {}
 
 
+def test_map_user_scroll_speed() -> None:
+    from opensign.protocol.codecs.coolledx import map_user_scroll_speed
+
+    assert map_user_scroll_speed(0) == 0
+    assert map_user_scroll_speed(10) == 255
+    assert map_user_scroll_speed(5) == 128
+    assert map_user_scroll_speed(8) == 204  # round(8 * 255 / 10)
+    with pytest.raises(CodecError):
+        map_user_scroll_speed(11)
+
+
+def test_coolledx_encode_text_banner_uses_text_opcode() -> None:
+    from opensign.animation.render import render_wide_text
+
+    codec = select_codec(coolledx_profile(), allow_experimental=False)
+    banner = render_wide_text("HELLO", 16)
+    encoded = codec.encode_text_banner("HELLO", banner.tobytes(), banner.width)
+    assert encoded.metadata["opcode"] == 0x02
+    assert encoded.flow_control["await_ack"] is True
+    assert encoded.metadata["banner_width"] == banner.width
+    assert all(p[0] == 0x01 and p[-1] == 0x03 for p in encoded.packets)
+    # Payload includes the 81-byte text header after 24 reserved bytes.
+    assert encoded.metadata["payload_bytes"] > 24 + 81
+
+
+def test_play_native_text_dry_run_maps_user_speed() -> None:
+    from opensign.animation.render import render_wide_text
+    from opensign.protocol.runtime import ProtocolRuntime
+
+    profile = coolledx_profile()
+    banner = render_wide_text("HI", 16)
+    result = asyncio.run(
+        ProtocolRuntime(profile).play_native_text(
+            "HI",
+            banner.tobytes(),
+            banner.width,
+            speed=8,
+            execute=False,
+        )
+    )
+    assert result["native_text"]["user_speed"] == 8
+    assert result["native_text"]["device_speed"] == 204
+    assert result["native_text"]["mode"] == 2
+    assert [t["step"] for t in result["transfers"]] == ["banner", "speed", "mode"]
+    assert result["transfers"][0]["transfer"]["dry_run"] is True
+    assert result["encoded"]["banner"]["metadata"]["opcode"] == 0x02
+
+
 def test_coolledx_frame_bundle_requests_ack_pacing() -> None:
     codec = select_codec(coolledx_profile(), allow_experimental=False)
     bundle = FrameBundle.from_images([Image.new("RGB", (64, 16), "white")], [100])

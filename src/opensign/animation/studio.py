@@ -10,12 +10,14 @@ from opensign.contracts import FrameBundle, utc_now_iso
 from .render import (
     apply_levels,
     composite_frame,
+    compute_auto_levels,
     fit_image,
     image_from_base64,
     load_and_fit_image,
     normalize_frames,
     parse_color,
     quantize_to_panel,
+    reachable_channels,
     render_checker_animation,
     render_scroll_text,
     render_static_text,
@@ -31,6 +33,29 @@ from .render import (
 TARGET_FUSION_HZ = 62.0
 
 
+def _thin_to_budget(
+    frames: list[Image.Image],
+    durations: list[int],
+    max_frames: int,
+) -> tuple[list[Image.Image], list[int]]:
+    """Evenly drop frames to fit ``max_frames`` without changing playback time.
+
+    Each dropped frame's hold time is folded into the surviving frame, so the
+    clip still spans the same total duration -- a scroll covers the same
+    distance in the same wall-clock time (identical speed, coarser step) and an
+    animation keeps its run time instead of silently speeding up.
+    """
+    if max_frames <= 0 or len(frames) <= max_frames:
+        return frames, durations
+    step = len(frames) / max_frames
+    keep = sorted({min(len(frames) - 1, int(i * step)) for i in range(max_frames)})
+    merged: list[int] = []
+    for position, index in enumerate(keep):
+        nxt = keep[position + 1] if position + 1 < len(keep) else len(frames)
+        merged.append(sum(durations[index:nxt]))
+    return [frames[i] for i in keep], merged
+
+
 class PixelAnimationStudio:
     """Facade matching the PixelAnimationStudio SeedScript module."""
 
@@ -39,6 +64,16 @@ class PixelAnimationStudio:
             raise ValueError("width and height must be positive")
         self.width = width
         self.height = height
+
+    @staticmethod
+    def _as_rgb(source: str | Path | Image.Image) -> Image.Image:
+        """Coerce a path/Image source to an RGB image once, so auto-levels can
+        read the source histogram (before fitting/letterboxing) without a second
+        file open."""
+        if isinstance(source, Image.Image):
+            return source.convert("RGB")
+        with Image.open(source) as opened:
+            return opened.convert("RGB")
 
     @staticmethod
     def _resample_for(dither: str) -> Image.Resampling | None:
@@ -178,10 +213,19 @@ class PixelAnimationStudio:
         background: str = "black",
         pixels_per_frame: int = 1,
         loop_mode: str = "loop",
+        max_frames: int | None = None,
         rotation: int = 0,
         flip_horizontal: bool = False,
         flip_vertical: bool = False,
     ) -> FrameBundle:
+        """Render text, scrolling by default, into a FrameBundle.
+
+        A per-pixel scroll produces one frame per pixel of travel, so a longer
+        phrase can exceed the panel's frame buffer. Pass ``max_frames`` (the
+        device budget) and the scroll is thinned to fit while keeping its speed:
+        it advances a coarser step but covers the same distance in the same
+        time, then loops. A static frame is never thinned.
+        """
         if frames_per_second <= 0:
             raise ValueError("frames_per_second must be positive")
         frames = (
@@ -205,10 +249,14 @@ class PixelAnimationStudio:
             ]
         )
         duration = max(1, round(1000 / frames_per_second))
+        durations = [duration] * len(frames)
+        if scroll and max_frames is not None:
+            frames, durations = _thin_to_budget(frames, durations, max_frames)
+        median_ms = sorted(durations)[len(durations) // 2] if durations else duration
         return self.compile_images(
             frames,
-            frame_durations_ms=[duration] * len(frames),
-            frames_per_second=frames_per_second,
+            frame_durations_ms=durations,
+            frames_per_second=(1000 / median_ms) if median_ms else frames_per_second,
             loop_mode=loop_mode,
             rotation=rotation,
             flip_horizontal=flip_horizontal,
@@ -224,14 +272,18 @@ class PixelAnimationStudio:
         fit_mode: str = "contain",
         background: str = "black",
         dither: str = "none",
+        auto_levels: bool = False,
         black_point: int = 0,
         white_point: int = 255,
         rotation: int = 0,
         flip_horizontal: bool = False,
         flip_vertical: bool = False,
     ) -> FrameBundle:
+        source_rgb = self._as_rgb(source)
+        if auto_levels:
+            black_point, white_point = compute_auto_levels(source_rgb)
         image = load_and_fit_image(
-            source,
+            source_rgb,
             self.width,
             self.height,
             fit_mode=fit_mode,
@@ -248,7 +300,12 @@ class PixelAnimationStudio:
             flip_horizontal=flip_horizontal,
             flip_vertical=flip_vertical,
             dither=dither,
-            metadata={"pattern": "image", "fit_mode": fit_mode},
+            metadata={
+                "pattern": "image",
+                "fit_mode": fit_mode,
+                "levels": {"black": black_point, "white": white_point, "auto": auto_levels},
+                "reachable_channels": reachable_channels(image),
+            },
         )
 
     def create_base64_image_bundle(self, value: str, **options: Any) -> FrameBundle:
@@ -264,6 +321,7 @@ class PixelAnimationStudio:
         speed_ms: int | None = None,
         fit_mode: str = "contain",
         background: str = "black",
+        auto_levels: bool = False,
         black_point: int = 0,
         white_point: int = 255,
         rotation: int = 0,
@@ -284,8 +342,11 @@ class PixelAnimationStudio:
         """
         if subframes < 2:
             raise ValueError("subframes must be >= 2 (use create_image_bundle for a single frame)")
+        source_rgb = self._as_rgb(source)
+        if auto_levels:
+            black_point, white_point = compute_auto_levels(source_rgb)
         image = load_and_fit_image(
-            source,
+            source_rgb,
             self.width,
             self.height,
             fit_mode=fit_mode,
@@ -312,6 +373,7 @@ class PixelAnimationStudio:
                 "loop_hz": round(1000 / (speed_ms * len(frames)), 1),
                 "black_point": black_point,
                 "white_point": white_point,
+                "auto_levels": auto_levels,
             },
         )
 
@@ -357,15 +419,8 @@ class PixelAnimationStudio:
         if not frames:
             raise ValueError("source contains no frames")
 
-        if max_frames > 0 and len(frames) > max_frames:
-            step = len(frames) / max_frames
-            keep = sorted({min(len(frames) - 1, int(i * step)) for i in range(max_frames)})
-            merged: list[int] = []
-            for position, index in enumerate(keep):
-                nxt = keep[position + 1] if position + 1 < len(keep) else len(frames)
-                merged.append(sum(durations[index:nxt]))
-            frames = [frames[i] for i in keep]
-            durations = merged
+        if max_frames > 0:
+            frames, durations = _thin_to_budget(frames, durations, max_frames)
 
         if fps is not None:
             if fps <= 0:

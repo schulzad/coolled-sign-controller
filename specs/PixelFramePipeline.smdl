@@ -1,7 +1,7 @@
 Seedscript module description language 2.3
 
 Module("PixelFramePipeline") {
-  description: "Compile a scene or an animated source (text, static image, GIF/APNG) into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, resample the timeline onto the device's timing model, quantize to the panel's governed palette, and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (an 80-frame 64x16 GIF displayed)."
+  description: "Compile a scene, an animated source (text, static image, GIF/APNG), or a still expanded into a temporal (frame-rate-control) subframe loop into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, tone-remap with levels, resample the timeline onto the device's timing model, quantize to the panel's governed palette (or temporally dither a still), and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (an 80-frame 64x16 GIF displayed); temporal-colour stills confirmed the same day against the ~62 Hz flicker-fusion ceiling."
   metaphor: "A print shop's composing room: set the type, square the plate, and proof it against the original -- but never run the press."
   version: "2.3"
   tags: ['coolledx', 'rendering', 'compile', 'animation', 'layer:animation', 'transport-neutral', 'verified-hardware']
@@ -45,6 +45,25 @@ Module("PixelFramePipeline") {
         actions: { decode: "decode_animated_source", fit: "fit_and_orient", resample: "resample_timeline", quantize: "quantize_frame", bundle: "build_frame_bundle", report: "compile_diagnostics" }
         kernel: "CompileKernel"
         tags: ["entry", "compile", "animation"]
+      }
+
+      Directive("/compile_temporal_still") {
+        description: "Compile a STILL image into a fast N-subframe loop that fakes intermediate colours by temporal dithering (frame-rate control): fit/orient, tone-remap with levels, expand into N>=2 binarized subframes, and time the loop above the panel's flicker-fusion ceiling so each pixel's duty cycle reads as a colour the 1-bit panel cannot show in a single frame. Produces an ordinary multi-frame FrameBundle that rides the verified 0x04 animation path -- no protocol change. For stills only: the loop IS the picture and must carry no motion."
+        metaphor: "Fanning one plate into a rapid flicker-book so the eye blends the ink into shades that no single plate holds."
+        parameters: {
+          image: { type: "Image|path", description: "Single still to expand.", required: true },
+          width: { type: "int", description: "Panel width.", required: true },
+          height: { type: "int", description: "Panel height.", required: true },
+          subframes: { type: "int", description: "Number of temporal subframes (N >= 2); yields N+1 duty levels per channel.", required: true },
+          black_point: { type: "int", description: "Levels: crush channel values <= black_point to off before dithering (0-254).", required: false, default: 0 },
+          white_point: { type: "int", description: "Levels: lift channel values >= white_point to full on (1-255).", required: false, default: 255 },
+          fusion_hz: { type: "float", description: "Flicker-fusion ceiling the loop must beat; default is the device fact (~62 Hz).", required: false, default: 62.0 },
+          fit_mode: { type: "string", description: "contain | cover | stretch.", required: false, default: "contain" },
+          orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
+        }
+        actions: { fit: "fit_and_orient", level: "apply_levels", expand: "temporal_dither_still", pace: "choose_fused_speed", bundle: "build_frame_bundle", report: "compile_diagnostics" }
+        kernel: "CompileKernel"
+        tags: ["entry", "compile", "temporal", "frame-rate-control"]
       }
     }
 
@@ -198,6 +217,68 @@ Module("PixelFramePipeline") {
               }
         tags: ["pure", "observability"]
       }
+
+      Function("apply_levels") {
+        description: "Pre-quantization tone control: contrast-stretch each RGB channel so [black_point, white_point] maps to [0, 255], clipping outside. A general step (used by the image and temporal paths) that runs BEFORE any dithering or the codec's hard >127 threshold. It is the fix for 'dark background washes out': a not-quite-black background otherwise dithers -- especially under many temporal subframes -- into a dim glow, so raising black_point crushes it to off; lowering white_point lifts a muted foreground. A no-op when black_point=0 and white_point=255."
+        metaphor: "Wiping the plate's highlights and shadows to the paper's true range before inking."
+        input_parameters: {
+          frame: { type: "Image", description: "RGB frame or still.", required: true },
+          black_point: { type: "int", description: "Values <= this clip to 0 (0-254).", required: false, default: 0 },
+          white_point: { type: "int", description: "Values >= this clip to 255 (1-255).", required: false, default: 255 }
+        }
+        output_format: { frame: "Image Contrast-stretched RGB." }
+        implementation: |
+          def apply_levels(frame, black_point=0, white_point=255):
+              if not 0 <= black_point < white_point <= 255:
+                  raise CompileError('require 0 <= black_point < white_point <= 255')
+              if black_point == 0 and white_point == 255:
+                  return frame
+              span = white_point - black_point
+              lut = [max(0, min(255, round((v - black_point) * 255 / span))) for v in range(256)]
+              return apply_lut_per_channel(frame, lut)
+        tags: ["pure", "transport-neutral"]
+      }
+
+      Function("temporal_dither_still") {
+        description: "Expand ONE fitted still into N>=2 binarized subframes for temporal colour (frame-rate control). A single spatiotemporal ordered dither: for subframe t the per-pixel threshold is (order_seq[t] + bayer(x,y)) / N, where the Bayer term dithers in space (neighbours round opposite ways) and order_seq (a van der Corput / bit-reversal permutation) spreads each pixel's on-frames as evenly as possible in time to push flicker to the highest frequency the frame count allows. Output channels are exactly 0 or 255 -- each subframe is palette-exact -- but a pixel's DUTY CYCLE across the loop reads, above fusion, as one of N+1 intermediate levels per channel. Caveats: duty couples to luminance (a 50% level is ~half brightness) and channels are not perceptually matched, so the reachable perceived gamut is a luminance-limited volume, not the full cube. Stills only -- the loop IS the picture."
+        metaphor: "Slicing one drawing into a rapid flip-book whose average is a tone the page could never print."
+        input_parameters: {
+          still: { type: "Image", description: "Single fitted, levelled RGB still.", required: true },
+          subframes: { type: "int", description: "N >= 2; yields N+1 duty levels per channel.", required: true },
+          order: { type: "int", description: "Bayer matrix order for the spatial mask.", required: false, default: 4 }
+        }
+        output_format: { frames: "array[Image] N binarized subframes in flicker-optimal play order." }
+        implementation: |
+          def temporal_dither_still(still, subframes, order=4):
+              if subframes < 2:
+                  raise CompileError('temporal dithering needs at least 2 subframes')
+              bayer = bayer_unit(still.width, still.height, order)      # per-pixel [0,1)
+              sequence = even_spread_order(subframes)                  # van der Corput
+              frames = []
+              for step in sequence:
+                  frames.append(threshold_channels(still, step, bayer, subframes))  # -> 0/255
+              return frames
+        tags: ["pure", "transport-neutral", "verified-hardware"]
+      }
+
+      Function("choose_fused_speed") {
+        description: "Pick the per-frame hold time so the whole N-frame loop repeats above the panel's MEASURED flicker-fusion ceiling (a device fact ~62 Hz on this hardware): speed_ms = floor(1000 / (fusion_hz * N)), clamped to >= 1, so even the slowest-pulsing (1-of-N) pixel beats fusion -- loop_period = N * speed_ms <= 1000 / fusion_hz. Overridable. Below the ceiling the dither stops fusing and reads as visible flicker rather than a steady tone; this speed becomes the bundle's single global animation speed."
+        metaphor: "Cranking the flip-book just fast enough that the eye stops seeing pages and starts seeing a shade."
+        input_parameters: {
+          subframes: { type: "int", description: "N subframes in the loop.", required: true },
+          fusion_hz: { type: "float", description: "Flicker-fusion ceiling to beat (device fact).", required: false, default: 62.0 },
+          speed_override_ms: { type: "int|null", description: "Explicit ms/frame override.", required: false, default: null }
+        }
+        output_format: {
+          speed_ms: "int Per-frame hold time (ms/frame) for the loop.",
+          loop_hz: "float Resulting whole-loop repetition rate."
+        }
+        implementation: |
+          def choose_fused_speed(subframes, fusion_hz=62.0, speed_override_ms=None):
+              speed_ms = speed_override_ms or max(1, int(1000 / (fusion_hz * subframes)))
+              return speed_ms, round(1000 / (speed_ms * subframes), 1)
+        tags: ["pure", "verified-hardware"]
+      }
     }
 
     Sprout {
@@ -226,20 +307,38 @@ Module("PixelFramePipeline") {
         ]
         tags: ["pipe", "transport-neutral", "animation"]
       }
+
+      Chain("CompileTemporalStillFlow") {
+        description: "Still -> fit/orient -> levels -> N-subframe spatiotemporal dither -> fused-speed timing -> hashed bundle -> diagnostics."
+        metaphor: "Square the plate, set its range, fan it into a flip-book, spin it past fusion, and file the slip."
+        links: [
+          { source: "/compile_temporal_still", target: "fit_and_orient", description: "Fit the single still to panel geometry (NEAREST)." },
+          { source: "fit_and_orient", target: "apply_levels", description: "Contrast-stretch before dithering." },
+          { source: "apply_levels", target: "temporal_dither_still", description: "Expand into N binarized subframes." },
+          { source: "temporal_dither_still", target: "choose_fused_speed", description: "Time the loop above the fusion ceiling." },
+          { source: "choose_fused_speed", target: "build_frame_bundle", description: "Bundle the subframes at one global speed." },
+          { source: "build_frame_bundle", target: "compile_diagnostics", description: "Report subframes, loop_hz, levels, fused speed." }
+        ]
+        tags: ["pipe", "transport-neutral", "temporal", "frame-rate-control"]
+      }
     }
 
     Kernels {
       Kernel("CompileKernel") {
         description: "Governs source-to-bundle compilation; keeps rendering pure and transport-neutral and hands off exactly one FrameBundle at the bundle boundary."
         metaphor: "The compositor foreman who owns the plates but never the press."
-        directive_chains: ['CompileSceneFlow', 'CompileAnimationFlow']
+        directive_chains: ['CompileSceneFlow', 'CompileAnimationFlow', 'CompileTemporalStillFlow']
         invariants: [
           "Compilation emits transport-neutral RGB888 and never imports Bluetooth, packet framing, or device opcodes.",
           "The target palette is an input (derived by DeviceProfileLedger from the profile color_mode); the compiler never reads the wire format.",
           "Quantized frames contain only exact palette colors, so the codec's 1-bit threshold is lossless.",
+          "Levels (black/white point) are a pre-quantization tone control: they run before dithering and the codec threshold, never after quantization.",
           "Animation dithering defaults to a panel-anchored ordered matrix for temporal stability; error diffusion is an opt-in static-image mode.",
           "The resample filter follows colour-reduction intent: dither_mode 'none' fits with NEAREST (a smoothing filter manufactures grey edges the codec's hard >127 threshold scatters), while dithered modes use size-aware smoothing.",
           "Variable source timing is resampled onto the device single global speed or rejected in strict mode -- never silently dropped.",
+          "Temporal (FRC) compilation expands a STILL into N>=2 binarized subframes: each subframe is palette-exact, but the PERCEIVED colour is inter-palette via duty-cycle time-averaging -- it is not a new single-frame colour.",
+          "A temporal loop is timed above the panel's measured flicker-fusion ceiling (device fact, ~62 Hz): loop_period = N * speed_ms <= 1000 / fusion_hz, or the dither reads as visible flicker instead of a fused tone.",
+          "Temporal expansion is for stills only; it must carry no motion, and its subframe count still fits the codec's 30 KiB / 80-frame buffer.",
           "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec's 30 KiB frame buffer (80 at 64x16) before hand-off.",
           "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames.",
           "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService."
@@ -254,22 +353,28 @@ Module("PixelFramePipeline") {
     owns: |
       - Source decoding: text, static image, and bounded animated GIF/APNG (composited, alpha-resolved) frames.
       - Fit/orient to panel geometry.
+      - Levels (black/white point) tone remapping before quantization, manual or auto (compute_auto_levels: a value-histogram contrast stretch, read from the source so letterbox bars do not skew it, that rescues low-contrast art); reports which channels can actually cross the panel's 1-bit threshold.
       - Palette-aware quantization + dithering (ordered default for animation; error diffusion opt-in for static).
+      - Temporal-colour (frame-rate-control) expansion of a still into N binarized subframes timed above the fusion ceiling.
       - Timeline resampling onto the device single-speed model, with honest diagnostics.
       - Transport-neutral FrameBundle assembly with per-frame hashes, a bundle_hash, and quantized previews.
     delegates: |
       - Wire encoding (bitplanes, chunking, opcodes, flow_control) to CoolLEDXProtocol.
       - Delivery, execute gating, tracing, artifact persistence, display confirmation, and the three-truths model to SignControlService.
-      - Palette/color_mode and geometry governance to DeviceProfileLedger.
+      - Palette/color_mode, geometry, and the flicker-fusion ceiling (device fact) governance to DeviceProfileLedger.
     verified_on_hardware: |
       - Rendering side: 64x16 HELLO (2026-07-13) and COOL displayed via the runtime path.
       - Animation compilation (decode/resample/quantize) confirmed 2026-07-13: an
         80-frame 64x16 GIF displayed; the two-frame.gif scatter under dither=none was
         traced to LANCZOS resample + hard threshold and fixed by none -> NEAREST fit.
+      - Temporal colour (FRC) confirmed 2026-07-13: a still shown as an N-subframe loop
+        reads as intermediate tones; the ~62 Hz fusion ceiling was measured by
+        scripts/flicker_probe.py, and running.png (a dark UI still) was rescued from a
+        washed-out glow by levels (apply_levels), now automatable via --auto-levels (2026-07-14).
     open_work: |
       - Real GIF/APNG decode with disposal + alpha compositing wired into PixelAnimationStudio (create_animation_bundle).
-      - Text legibility at 16px tall: scrolling 'Running' renders scrambled with and without dither -- revisit the render/threshold path (a per-channel threshold value fixed this once before); likely a render_text rasterization/threshold issue, not resample.
-      - Dither knob is exposed (none/ordered/floyd) and none now pairs with NEAREST; still want temporal-dither guidance surfaced in diagnostics.
+      - The scrambled 'Running' turned out to be the IMAGE path on a low-contrast AA badge (not text rendering): red/blue never cross the 1-bit threshold and green straddles it. Addressed 2026-07-14 by --auto-levels (value-histogram stretch) plus a dark-channel warning; the cleaner long-term answer for actual text is the native text path (crisp 1-bit glyphs, no downscale).
+      - Temporal colour is implemented (create_temporal_image_bundle) and surfaced in metadata (subframes/loop_hz/levels); remaining: per-channel perceptual matching and a proper perceived-gamut map so a target RGB picks subframe duty per channel.
       - bundle_hash cache to skip re-transfer when the panel already holds an asset.
   }
 }

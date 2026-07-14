@@ -38,10 +38,10 @@ Module("DeviceProfileLedger") {
       }
 
       Directive("/select_codec_gate") {
-        description: "Given a mode (dry-run or physical), decide whether the profile's protocol status and per-claim statuses permit codec selection. Dry-run allows experimental; physical requires verified (or replay_safe experimental where explicitly allowed)."
-        metaphor: "The gatekeeper who checks the register before letting a piece onto the floor."
+        description: "Decide whether the profile's protocol status and per-claim statuses permit codec selection, keyed on allow_experimental rather than on write-vs-plan. allow_experimental=true admits verified OR experimental; the opt-in strict gate (allow_experimental=false) admits only verified and requires replay_safe on each frame_transfer claim. Rejected and unverified/unknown are never selectable. Since 2026-07-14 the protocol runtime passes allow_experimental=true for BOTH dry-run and physical writes -- a controlled live test is how experimental evidence earns verified -- so the separate execute flag alone gates a real write vs a byte-exact plan."
+        metaphor: "The gatekeeper who checks the register before letting a piece onto the floor -- the same check whether it goes to rehearsal or the live floor."
         parameters: {
-          mode: { type: "string", description: "dry_run | physical.", required: true }
+          allow_experimental: { type: "bool", description: "true (runtime default) admits experimental as well as verified; false is the opt-in verified-only gate.", required: true }
         }
         actions: { gate: "enforce_status_gate", pick: "resolve_characteristics" }
         kernel: "LedgerKernel"
@@ -140,24 +140,25 @@ Module("DeviceProfileLedger") {
       }
 
       Function("enforce_status_gate") {
-        description: "The gate codec selection relies on: for dry_run, protocol.status must be verified or experimental; for physical, it must be verified (or experimental explicitly marked replay_safe where the caller allows it). Rejected profiles are never selectable."
-        metaphor: "Checking the register before the piece leaves the vault."
+        description: "The gate codec selection relies on, keyed on allow_experimental (matching select_codec's parameter), not on write-vs-plan: allow_experimental=true admits verified OR experimental; allow_experimental=false (the opt-in strict gate) admits only verified and additionally requires each frame_transfer claim be marked replay_safe. Rejected and unverified/unknown profiles are never selectable. The protocol runtime passes allow_experimental=true for both dry-run and physical delivery, so transmitting never itself requires verified -- the execute flag decides write vs plan -- while unattended/API callers may still opt into the verified-only gate."
+        metaphor: "Checking the register before the piece leaves the vault -- the same check for rehearsal or the floor, unless the curator asks for the strict rule."
         input_parameters: {
-          mode: { type: "string", description: "dry_run | physical.", required: true }
+          allow_experimental: { type: "bool", description: "true admits experimental; false is the verified-only gate (also requires replay_safe on frame_transfer claims).", required: true }
         }
         output_format: { allowed: "bool Whether a codec may be selected.", reason: "string Why or why not." }
         implementation: |
-          def enforce_status_gate(mode):
+          def enforce_status_gate(allow_experimental):
               status = profile['protocol']['status']
-              if status == 'rejected':
-                  return False, 'rejected profiles cannot be selected'
-              allowed = {'verified', 'experimental'} if mode == 'dry_run' else {'verified'}
-              return status in allowed, f'status={status} mode={mode}'
+              if status in ('rejected', 'unverified', 'unknown'):
+                  return False, f'{status} profiles cannot be selected'
+              allowed = {'verified', 'experimental'} if allow_experimental else {'verified'}
+              # the strict gate additionally requires replay_safe per frame_transfer claim (see codec _validate_spec)
+              return status in allowed, f'status={status} allow_experimental={allow_experimental}'
         tags: ["governance"]
       }
 
       Function("capability_matrix") {
-        description: "Derive the capabilities block from each claim's own status, so consumers can feature-detect without parsing the protocol section. A flag is 'usable' by the SAME rule the physical status gate enforces -- verified, or replay_safe experimental -- so a capability is never advertised that could not actually run. static_image and stored_animation are INDEPENDENT claims read from frame_transfer.modes: a verified static upload (0x03) must never flip stored_animation (0x04) true, and an experimental-but-not-replay_safe animation claim stays false until a live 0x04 test. frame_streaming reflects its own claim (rejected here -- no streaming mechanism exists)."
+        description: "Derive the capabilities block from each claim's own status, so consumers can feature-detect without parsing the protocol section. A flag is 'usable' by the conservative rule -- verified, or replay_safe experimental -- so a capability is never advertised that could not actually run (this stays stricter than the runtime transmit gate on purpose: it advertises only proven features). static_image, stored_animation, and native_text_scroll are INDEPENDENT claims read from frame_transfer.modes: a verified static upload (0x03) must never flip stored_animation (0x04) or native_text_scroll (0x02) true, and an experimental-but-not-replay_safe claim stays false until its own live test. frame_streaming reflects its own claim (rejected here -- no streaming mechanism exists)."
         metaphor: "Summarizing which exhibits are cleared for viewing, each on its own paperwork, using the same checklist the gatekeeper uses."
         input_parameters: { profile: { type: "object", description: "Profile with protocol section.", required: true } }
         output_format: { capabilities: "object Boolean feature flags, one per independent claim." }
@@ -179,6 +180,7 @@ Module("DeviceProfileLedger") {
                   # each frame-transfer mode is judged on its own claim, never inherited:
                   'static_image': is_usable(modes.get('static_image') or ft),
                   'stored_animation': is_usable(modes.get('stored_animation')),
+                  'native_text_scroll': is_usable(modes.get('native_text_scroll')),
                   'frame_streaming': is_usable(modes.get('frame_streaming')),
               }
         tags: ["pure"]
@@ -201,6 +203,29 @@ Module("DeviceProfileLedger") {
               if mode in ('7color', 'seven_color', 1):
                   return rgb_cube_corners(), 8      # black + 7 primaries/secondaries
               raise ValueError(f'color_mode {mode!r} not representable by the 1-bit codec')
+        tags: ["pure", "verified-hardware"]
+      }
+
+      Function("derive_effective_gamut") {
+        description: "Report the PERCEIVED gamut reachable by temporal frame-rate control, and the measured device fact that bounds it. Beyond the native single-frame palette (derive_display_palette), a fast subframe loop time-averages the native colours into a larger but luminance-limited volume between the palette corners (a 50% duty is ~half brightness; the channels are not perceptually matched, so it is a volume, not the full cube). This is only reachable while the loop is timed above the panel's flicker-fusion ceiling -- hardware.flicker_fusion_hz, measured ~62 Hz on this panel by scripts/flicker_probe.py -- which the ledger governs as an evidence-backed device fact exactly like the 30 KiB frame buffer. PixelFramePipeline.choose_fused_speed consumes this ceiling; temporal rendering is refused when it is unknown, never guessed."
+        metaphor: "Noting not just the inks in the tray but the shades the eye will blend from them if the plates spin fast enough -- and how fast that must be."
+        input_parameters: { profile: { type: "object", description: "Profile with color_mode and hardware.flicker_fusion_hz.", required: true } }
+        output_format: {
+          native_palette: "array[rgb] Single-frame colours (from derive_display_palette).",
+          flicker_fusion_hz: "float Measured ceiling a temporal loop must beat.",
+          perceived_gamut: "string Luminance-limited volume between palette corners via duty cycle.",
+          temporal_available: "bool True only when a measured fusion ceiling is on record."
+        }
+        implementation: |
+          def derive_effective_gamut(profile):
+              native, states = derive_display_palette(profile)
+              hz = profile.get('hardware', {}).get('flicker_fusion_hz')  # measured device fact
+              return {
+                  'native_palette': native,
+                  'flicker_fusion_hz': hz,
+                  'perceived_gamut': 'luminance-limited volume between palette corners (duty-cycle time-average)',
+                  'temporal_available': isinstance(hz, (int, float)) and hz > 0,
+              }
         tags: ["pure", "verified-hardware"]
       }
     }
@@ -247,11 +272,13 @@ Module("DeviceProfileLedger") {
           "No claim advances without an appended evidence entry citing a source.",
           "unverified -> verified cannot be reached in one step; experimental is mandatory.",
           "verified requires a live_hardware_test evidence entry.",
-          "static_image (0x03) and stored_animation (0x04) are independent claims: a verified static upload never implies verified animation.",
+          "static_image (0x03), stored_animation (0x04), and native_text_scroll (0x02) are independent claims: a verified static upload never implies verified animation or verified text scroll.",
           "The display palette is derived from the decoded color_mode and handed to the renderer; device colour knowledge never lives in PixelFramePipeline.",
+          "The native single-frame palette and the temporal-FRC perceived gamut are distinct: the perceived volume is luminance-limited and time-averaged, never advertised as native single-frame colours.",
+          "The flicker-fusion ceiling (hardware.flicker_fusion_hz) is a measured, evidence-backed device fact like the 30 KiB frame buffer; temporal rendering must be timed above it and is refused when it is unknown.",
           "Discovery confidence is capped at 0.95 -- passive observation never yields certainty.",
           "Active write/notify characteristics are set by explicit decision, not by discovery.",
-          "Physical execution requires a verified protocol status (or explicitly allowed replay_safe experimental).",
+          "Codec selection is gated on allow_experimental, not on write-vs-plan: the runtime admits experimental for both dry-run and physical delivery (a controlled live test is how experimental earns verified) and the execute flag alone gates a real write; the opt-in strict gate (allow_experimental=false) still admits only verified and requires replay_safe.",
           "Rejected is terminal and always permitted; evidence is append-only and never rewritten."
         ]
         tags: ["orchestrator", "governance"]
@@ -265,19 +292,25 @@ Module("DeviceProfileLedger") {
       - The profile schema and its validation.
       - The claim lifecycle: unknown/unverified -> experimental -> verified | rejected.
       - Append-only evidence entries and capped discovery confidence.
-      - The status gate that codec selection (select_codec allow_experimental) enforces.
+      - The status gate that codec selection (select_codec allow_experimental) enforces: allow_experimental=true admits verified+experimental (the runtime default, for dry-run and physical alike); allow_experimental=false is the opt-in verified-only + replay_safe gate.
       - Promotion of characteristic candidates to active write/notify UUIDs.
-      - Per-mode frame_transfer governance: static_image (0x03) and stored_animation (0x04) as independent claims.
+      - Per-mode frame_transfer governance: static_image (0x03), stored_animation (0x04), and native_text_scroll (0x02) as independent claims.
       - Deriving the display palette (and wire colour-state count) from the decoded color_mode for the renderer.
+      - Governing the flicker-fusion ceiling (hardware.flicker_fusion_hz) as a measured device fact, and the perceived (temporal-FRC) gamut vs the native palette.
     delegates: |
       - Producing raw candidates and decoded geometry to CoolLEDXDiscovery.
       - Encoding/decoding actual bytes to CoolLEDXProtocol.
       - Physical delivery to GuardedTransport.
+      - Consuming the fusion ceiling to time temporal loops to PixelFramePipeline.choose_fused_speed.
     verified_on_hardware: |
-      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) had its first live test 2026-07-13 (an 80-frame 64x16 clip displayed; 81 did not, pinning the 30 KiB frame buffer) -- promote to verified once that evidence entry is appended to the profile; frame_streaming rejected; power/speed/mode experimental.
+      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) had its first live test 2026-07-13 (an 80-frame 64x16 clip displayed; 81 did not, pinning the 30 KiB frame buffer) -- promote to verified once that evidence entry is appended to the profile; frame_streaming rejected; power experimental; mode=left (0x06) and speed (0x07, higher=faster) verified 2026-07-14 via native scroll speed sweep.
+      - native_text_scroll (0x02 wide banner + mode=left): scrolled on hardware 2026-07-14 (scripts/native_scroll_experiment.py) -- promote from experimental to verified once a live_hardware_test evidence entry is appended for the frame_transfer mode claim; speed/mode commands are already verified.
+      - Flicker-fusion ceiling measured ~62 Hz on the reference panel (2026-07-13, scripts/flicker_probe.py), enabling temporal-colour (FRC) rendering.
     open_work: |
-      - JSON Schema file (schema/device_profile.schema.json) to machine-check profiles in CI.
+      - Append the native_text_scroll live_hardware_test evidence entry and promote the frame_transfer.modes.native_text_scroll claim.
+      - JSON Schema file (schema/device_profile.schema.json) to machine-check profiles in CI -- add hardware.flicker_fusion_hz as a recorded, evidence-cited fact, and native_text_scroll as a frame_transfer mode claim.
       - A promotion CLI/helper that enforces these transitions instead of hand-editing JSON.
+      - Per-channel perceptual calibration so a target RGB maps to per-channel subframe duty (the perceived-gamut map temporal rendering wants).
       - Multi-panel registry semantics (several signs, one ledger).
   }
 }

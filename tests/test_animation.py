@@ -3,7 +3,13 @@ from pathlib import Path
 from PIL import Image
 
 from opensign.animation.preview import save_preview
-from opensign.animation.render import apply_levels, render_test_pattern, temporal_dither_frames
+from opensign.animation.render import (
+    apply_levels,
+    compute_auto_levels,
+    reachable_channels,
+    render_test_pattern,
+    temporal_dither_frames,
+)
 from opensign.animation.studio import PixelAnimationStudio
 
 
@@ -191,3 +197,42 @@ def test_dither_none_uses_nearest_and_keeps_pixels_crisp() -> None:
         for x in range(8):
             expected = (255, 0, 0) if (x + y) % 2 == 0 else (0, 0, 0)
             assert frame.getpixel((x, y)) == expected
+
+
+def test_compute_auto_levels_stretches_bimodal_and_guards_flat() -> None:
+    # dark background + bright green foreground -> stretch to those two modes
+    img = Image.new("RGB", (100, 1), (30, 30, 30))
+    for x in range(50, 100):
+        img.putpixel((x, 0), (10, 150, 10))
+    assert compute_auto_levels(img) == (30, 150)
+    # already spanning the range (enough mass at each end) -> no-op
+    full = Image.new("RGB", (100, 1), (128, 128, 128))
+    for x in range(10):
+        full.putpixel((x, 0), (0, 0, 0))
+    for x in range(10, 20):
+        full.putpixel((x, 0), (255, 255, 255))
+    assert compute_auto_levels(full) == (0, 255)
+    # flat image -> identity guard (never black_point >= white_point)
+    assert compute_auto_levels(Image.new("RGB", (8, 8), (100, 100, 100))) == (0, 255)
+
+
+def test_reachable_channels_flags_dark_channels() -> None:
+    assert reachable_channels(Image.new("RGB", (4, 4), (50, 150, 50))) == ["green"]
+    assert reachable_channels(Image.new("RGB", (4, 4), (200, 200, 200))) == ["red", "green", "blue"]
+
+
+def test_auto_levels_rescues_low_contrast_image() -> None:
+    # A dim green badge whose green (110) sits just below the codec's >127 cut:
+    # without levels it can't light at all; --auto-levels must lift it.
+    studio = PixelAnimationStudio(16, 8)
+    src = Image.new("RGB", (32, 8), (18, 18, 22))
+    for x in range(8, 24):
+        for y in range(2, 6):
+            src.putpixel((x, y), (15, 110, 15))
+    plain = studio.create_image_bundle(src, dither="none")
+    auto = studio.create_image_bundle(src, dither="none", auto_levels=True)
+    assert "green" not in plain.metadata["reachable_channels"]
+    assert "green" in auto.metadata["reachable_channels"]
+    assert auto.metadata["levels"]["auto"] is True
+    assert 0 < auto.metadata["levels"]["black"]
+    assert auto.metadata["levels"]["white"] < 255

@@ -17,13 +17,13 @@ given pixel; the firmware may clamp very small values, which is part of what we
 are measuring (requested vs perceived).
 
 Usage:
-    # dry run: print the plan, touch no hardware
+    # deploy and sweep on the real sign (BLE writes -- the default)
     uv run python scripts/flicker_probe.py
+    uv run python scripts/flicker_probe.py --pairs white_black,red_green
+    uv run python scripts/flicker_probe.py --dwell 4 --brightness 60
 
-    # deploy and sweep on the real sign (BLE writes)
-    uv run python scripts/flicker_probe.py --execute
-    uv run python scripts/flicker_probe.py --execute --pairs white_black,red_green
-    uv run python scripts/flicker_probe.py --execute --dwell 4 --brightness 60
+    # print the plan only, touch no hardware
+    uv run python scripts/flicker_probe.py --dry-run
 """
 
 from __future__ import annotations
@@ -124,11 +124,12 @@ async def main_async(args: argparse.Namespace) -> int:
         return 2
     speeds = [int(s) for s in str(args.speeds).split(",") if s.strip()]
 
-    _print_header(pairs, speeds, width, height, args.execute)
+    execute = not args.dry_run
+    _print_header(pairs, speeds, width, height, execute)
 
     codec = select_codec(profile, allow_experimental=True)
 
-    if not args.execute:
+    if not execute:
         for name, ms in _plan(pairs, speeds):
             target = "spatiotemporal 50% grey" if name == "checker_wb" else PAIRS[name][2]
             encoded = codec.encode_frame_bundle(_build_bundle(width, height, *_frames_for(name, width, height), ms))
@@ -138,7 +139,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 flush=True,
             )
         print("-" * 72, flush=True)
-        print("Dry run only. Re-run with --execute to sweep on the sign.", flush=True)
+        print("Dry run only (--dry-run). Re-run without --dry-run to sweep on the sign.", flush=True)
         return 0
 
     from bleak import BleakClient, BleakScanner  # imported lazily so dry runs need no BLE stack
@@ -196,7 +197,7 @@ async def main_async(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="CoolLEDX temporal-dither / flicker-fusion probe.")
     parser.add_argument("--profile", type=Path, default=Path("device_profile.local.json"))
-    parser.add_argument("--execute", action="store_true", help="Perform physical BLE writes (otherwise dry run).")
+    parser.add_argument("--dry-run", action="store_true", help="Print the plan only; perform no BLE writes.")
     parser.add_argument(
         "--pairs",
         default=",".join(PAIRS),
