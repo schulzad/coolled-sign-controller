@@ -164,3 +164,30 @@ def test_create_temporal_image_bundle_defaults_to_fused_speed() -> None:
     # N=2 -> speed_ms = floor(1000 / (62 * 2)) = 8ms, matching the ~62 Hz probe result
     assert bundle.metadata["coolledx_speed"] == 8
     assert bundle.frame_durations_ms == [8, 8]
+
+
+def test_resample_for_matches_colour_reduction_intent() -> None:
+    assert PixelAnimationStudio._resample_for("none") == Image.Resampling.NEAREST
+    assert PixelAnimationStudio._resample_for("ordered") is None
+    assert PixelAnimationStudio._resample_for("floyd") is None
+
+
+def test_dither_none_uses_nearest_and_keeps_pixels_crisp() -> None:
+    # 2x-oversized pixel art aligned to the panel grid. NEAREST recovers it
+    # exactly; the old size-based LANCZOS default would blend the 2x2 blocks into
+    # greys that the codec's >127 threshold scatters (the two-frame.gif glitch).
+    studio = PixelAnimationStudio(8, 8)
+    src = Image.new("RGB", (16, 16), (0, 0, 0))
+    for y in range(8):
+        for x in range(8):
+            if (x + y) % 2 == 0:
+                for dy in range(2):
+                    for dx in range(2):
+                        src.putpixel((x * 2 + dx, y * 2 + dy), (255, 0, 0))
+    frame = Image.frombytes(
+        "RGB", (8, 8), bytes(studio.create_image_bundle(src, dither="none").frames[0])
+    )
+    for y in range(8):
+        for x in range(8):
+            expected = (255, 0, 0) if (x + y) % 2 == 0 else (0, 0, 0)
+            assert frame.getpixel((x, y)) == expected

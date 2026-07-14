@@ -40,6 +40,19 @@ class PixelAnimationStudio:
         self.width = width
         self.height = height
 
+    @staticmethod
+    def _resample_for(dither: str) -> Image.Resampling | None:
+        """Pick a resampling filter that matches the colour-reduction intent.
+
+        ``dither="none"`` relies on the codec's hard ``>127`` threshold, so a
+        smoothing filter (LANCZOS/box) is actively harmful: it manufactures grey
+        edge pixels that the threshold then snaps unpredictably into scatter.
+        NEAREST keeps synthetic art / pixel-perfect sources crisp. Dithered modes
+        keep the size-aware default (``None`` -> LANCZOS downscale) since they can
+        represent the intermediate tones a smooth filter produces.
+        """
+        return Image.Resampling.NEAREST if dither == "none" else None
+
     def compile_images(
         self,
         images: Iterable[Image.Image],
@@ -223,6 +236,7 @@ class PixelAnimationStudio:
             self.height,
             fit_mode=fit_mode,
             background=background,
+            resample=self._resample_for(dither),
         )
         image = apply_levels(image, black_point=black_point, white_point=white_point)
         return self.compile_images(
@@ -358,8 +372,16 @@ class PixelAnimationStudio:
                 raise ValueError("fps must be positive")
             durations = [max(1, round(1000 / fps))] * len(frames)
 
+        resample = self._resample_for(dither)
         fitted = [
-            fit_image(frame, self.width, self.height, fit_mode=fit_mode, background=background)
+            fit_image(
+                frame,
+                self.width,
+                self.height,
+                fit_mode=fit_mode,
+                background=background,
+                resample=resample,
+            )
             for frame in frames
         ]
         median_ms = sorted(durations)[len(durations) // 2]

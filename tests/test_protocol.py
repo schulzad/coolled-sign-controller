@@ -165,10 +165,29 @@ def test_coolledx_single_frame_uses_image_opcode_without_speed() -> None:
 
 
 def test_coolledx_rejects_over_budget_frame_count() -> None:
-    codec = select_codec(coolledx_profile(), allow_experimental=False)
-    over_budget = _animation_bundle([50] * 256)  # frame count no longer fits in one byte
-    with pytest.raises(CodecError, match="frame"):
+    # Use a tiny panel so 256 frames stay under the 30 KiB frame buffer and the
+    # one-byte frame-count limit is what actually trips (256 * 8*8*3/8 = 6144 B).
+    codec = select_codec(coolledx_profile(width=8, height=8), allow_experimental=False)
+    over_budget = _animation_bundle([50] * 256, size=(8, 8))
+    with pytest.raises(CodecError, match="one byte"):
         codec.encode_frame_bundle(over_budget)
+
+
+def test_coolledx_accepts_animation_filling_the_frame_buffer() -> None:
+    # 80 frames * (64*16*3/8) = 30720 B = exactly the 30 KiB device buffer (works on hardware).
+    codec = select_codec(coolledx_profile(), allow_experimental=False)
+    encoded = codec.encode_frame_bundle(_animation_bundle([80] * 80))
+    assert encoded.metadata["opcode"] == 0x04
+    assert encoded.metadata["frame_count"] == 80
+    assert encoded.metadata["payload_bytes"] == 27 + 80 * 384
+
+
+def test_coolledx_rejects_animation_over_frame_buffer() -> None:
+    # 81 frames = 30.375 KiB: the device uploads it to 100% then displays nothing,
+    # so the codec rejects it up front (measured 2026-07-13).
+    codec = select_codec(coolledx_profile(), allow_experimental=False)
+    with pytest.raises(CodecError, match="frame buffer"):
+        codec.encode_frame_bundle(_animation_bundle([80] * 81))
 
 
 def test_coolledx_gif_frame_timing_round_trips_to_wire_speed() -> None:

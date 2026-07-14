@@ -1,7 +1,7 @@
 Seedscript module description language 2.3
 
 Module("PixelFramePipeline") {
-  description: "Compile a scene or an animated source (text, static image, GIF/APNG) into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, resample the timeline onto the device's timing model, quantize to the panel's governed palette, and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation is new and not yet hardware-confirmed."
+  description: "Compile a scene or an animated source (text, static image, GIF/APNG) into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, resample the timeline onto the device's timing model, quantize to the panel's governed palette, and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (an 80-frame 64x16 GIF displayed)."
   metaphor: "A print shop's composing room: set the type, square the plate, and proof it against the original -- but never run the press."
   version: "2.3"
   tags: ['coolledx', 'rendering', 'compile', 'animation', 'layer:animation', 'transport-neutral', 'verified-hardware']
@@ -39,7 +39,7 @@ Module("PixelFramePipeline") {
           palette: { type: "array[rgb]", description: "Target display palette (from the profile color_mode).", required: true },
           dither_mode: { type: "string", description: "ordered | none | error_diffusion (default ordered for animation).", required: false, default: "ordered" },
           timeline_policy: { type: "string", description: "resample | strict.", required: false, default: "resample" },
-          max_frames: { type: "int", description: "Hard cap on decoded frames (bounds memory and the codec budget).", required: false, default: 170 },
+          max_frames: { type: "int", description: "Hard cap on frames; bounds memory and the codec budget. Defaults to the device frame-buffer budget from CoolLEDXProtocol -- 30 KiB / plane_bytes = 80 at 64x16 -- not a fixed 170; longer sources are evenly subsampled to it (holds folded so run time is preserved).", required: false, default: "device frame-buffer budget (80 at 64x16)" },
           orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
         }
         actions: { decode: "decode_animated_source", fit: "fit_and_orient", resample: "resample_timeline", quantize: "quantize_frame", bundle: "build_frame_bundle", report: "compile_diagnostics" }
@@ -93,18 +93,20 @@ Module("PixelFramePipeline") {
       }
 
       Function("fit_and_orient") {
-        description: "Fit frames to panel geometry (contain/cover/stretch) and apply rotation and flips so the physical orientation matches the design. Runs before quantization so the palette snap sees final pixels."
-        metaphor: "Squaring every plate in the chase."
+        description: "Fit frames to panel geometry (contain/cover/stretch) and apply rotation and flips so the physical orientation matches the design. Runs before quantization so the palette snap sees final pixels. The resample filter is chosen by colour-reduction INTENT, not just by scale: dither_mode 'none' uses NEAREST because a smoothing filter (LANCZOS/box) manufactures grey edge pixels that the codec's hard >127 threshold then snaps into scatter (the two-frame.gif glitch, 2026-07-13); dithered modes keep the size-aware default (LANCZOS on downscale) since they can represent the intermediate tones a smooth filter produces. Crisp pixel-art therefore wants none+NEAREST and panel-native or integer-scaled sources; photos/video want a smoothing filter + a dither."
+        metaphor: "Squaring every plate in the chase, choosing a sharp or soft lens to match the ink."
         input_parameters: {
           frames: { type: "array[Image]", description: "Rendered/decoded frames.", required: true },
           width: { type: "int", description: "Panel width.", required: true },
           height: { type: "int", description: "Panel height.", required: true },
+          dither_mode: { type: "string", description: "Colour-reduction intent; selects the resample filter (none -> NEAREST, else size-aware smoothing).", required: false, default: "none" },
           orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
         }
         output_format: { frames: "array[Image] Fitted, oriented frames." }
         implementation: |
-          def fit_and_orient(frames, width, height, orientation):
-              return [apply_orientation(fit_image(f, width, height), orientation) for f in frames]
+          def fit_and_orient(frames, width, height, dither_mode, orientation):
+              resample = NEAREST if dither_mode == 'none' else None  # None -> size-aware (LANCZOS downscale)
+              return [apply_orientation(fit_image(f, width, height, resample=resample), orientation) for f in frames]
         tags: ["pure", "transport-neutral"]
       }
 
@@ -135,7 +137,7 @@ Module("PixelFramePipeline") {
       }
 
       Function("quantize_frame") {
-        description: "Snap each RGB frame to a supplied target palette (derived from the profile color_mode; e.g. seven-color -> the 8 corners of the RGB cube). Default dithering is a fixed panel-coordinate ordered (Bayer) matrix, which is deterministic and temporally stable across frames that differ only slightly -- avoiding the crawl that frame-local error diffusion causes in animation. Error diffusion is an opt-in mode for single static images. Output pixels are exactly palette colors, so the codec's 1-bit threshold becomes lossless. The palette is an input: this function never reads the wire format."
+        description: "Snap each RGB frame to a supplied target palette (derived from the profile color_mode; e.g. seven-color -> the 8 corners of the RGB cube). Default dithering is a fixed panel-coordinate ordered (Bayer) matrix, which is deterministic and temporally stable across frames that differ only slightly -- avoiding the crawl that frame-local error diffusion causes in animation. Error diffusion is an opt-in mode for single static images. Mode 'none' skips dithering and lets the codec's hard >127 threshold snap each channel; it is only crisp when paired with NEAREST fit (see fit_and_orient) and a source already near the channel extremes (synthetic art, text, UI), otherwise resample greys scatter. Output pixels are exactly palette colors, so the codec's 1-bit threshold becomes lossless. The palette is an input: this function never reads the wire format."
         metaphor: "Choosing ink from a fixed tray and stippling with a stencil that never shifts between plates."
         input_parameters: {
           frame: { type: "Image", description: "Fitted RGB frame.", required: true },
@@ -236,8 +238,9 @@ Module("PixelFramePipeline") {
           "The target palette is an input (derived by DeviceProfileLedger from the profile color_mode); the compiler never reads the wire format.",
           "Quantized frames contain only exact palette colors, so the codec's 1-bit threshold is lossless.",
           "Animation dithering defaults to a panel-anchored ordered matrix for temporal stability; error diffusion is an opt-in static-image mode.",
+          "The resample filter follows colour-reduction intent: dither_mode 'none' fits with NEAREST (a smoothing filter manufactures grey edges the codec's hard >127 threshold scatters), while dithered modes use size-aware smoothing.",
           "Variable source timing is resampled onto the device single global speed or rejected in strict mode -- never silently dropped.",
-          "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec budget before hand-off.",
+          "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec's 30 KiB frame buffer (80 at 64x16) before hand-off.",
           "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames.",
           "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService."
         ]
@@ -260,11 +263,13 @@ Module("PixelFramePipeline") {
       - Palette/color_mode and geometry governance to DeviceProfileLedger.
     verified_on_hardware: |
       - Rendering side: 64x16 HELLO (2026-07-13) and COOL displayed via the runtime path.
-      - Animation compilation (decode/resample/quantize) is new and not yet hardware-confirmed (see stored_animation 0x04, experimental).
+      - Animation compilation (decode/resample/quantize) confirmed 2026-07-13: an
+        80-frame 64x16 GIF displayed; the two-frame.gif scatter under dither=none was
+        traced to LANCZOS resample + hard threshold and fixed by none -> NEAREST fit.
     open_work: |
       - Real GIF/APNG decode with disposal + alpha compositing wired into PixelAnimationStudio (create_animation_bundle).
-      - Dither tuning at 16px tall: nearest vs ordered often reads cleaner than error diffusion; expose the knob.
+      - Text legibility at 16px tall: scrolling 'Running' renders scrambled with and without dither -- revisit the render/threshold path (a per-channel threshold value fixed this once before); likely a render_text rasterization/threshold issue, not resample.
+      - Dither knob is exposed (none/ordered/floyd) and none now pairs with NEAREST; still want temporal-dither guidance surfaced in diagnostics.
       - bundle_hash cache to skip re-transfer when the panel already holds an asset.
-      - Confirm animation cadence once opcode 0x04 timing is hardware-tested.
   }
 }

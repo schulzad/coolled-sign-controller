@@ -13,12 +13,14 @@ import asyncio
 import importlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 import opensign.protocol  # noqa: F401  (registers bundled device codecs)
 from opensign.animation.preview import save_preview
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile
+from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
 from opensign.protocol.runtime import ProtocolRuntime
 
 DEFAULT_PROFILE = Path("device_profile.local.json")
@@ -70,6 +72,34 @@ def _add_common_send_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--timeout", type=float, default=15.0)
 
 
+def _print_transfer_summary(result: dict) -> None:
+    """Human-readable digest on stderr so the JSON firehose stays parseable.
+
+    Distinguishes the two silent-failure modes we care about: the device NAKed a
+    chunk (a distinct notification payload appears) versus it accepted every chunk
+    but still did not display (all acks in, zero timeouts -> a device-side
+    capacity/ceiling issue rather than a transport error).
+    """
+    meta = result.get("encoded", {}).get("metadata", {})
+    transfer = result.get("transfer", {})
+    notifications = transfer.get("notifications", [])
+    distinct = Counter(note.get("hex", "") for note in notifications)
+    lines = [
+        "-- transfer summary --",
+        f"opcode={meta.get('opcode')} frames={meta.get('frame_count')} "
+        f"payload={meta.get('payload_bytes')}B",
+        f"success={transfer.get('success')} dry_run={transfer.get('dry_run')} "
+        f"packets={transfer.get('packet_count')} acks={transfer.get('acks_received')} "
+        f"timeouts={transfer.get('ack_timeouts')}",
+    ]
+    if distinct:
+        lines.append(f"device notifications ({len(notifications)} total, "
+                     f"{len(distinct)} distinct):")
+        for hexval, count in distinct.most_common(6):
+            lines.append(f"  {hexval or '<empty>'} x{count}")
+    print("\n".join(lines), file=sys.stderr)
+
+
 def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
     if args.preview:
         save_preview(bundle, args.preview, scale=8)
@@ -84,6 +114,7 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
         )
     )
     print(json.dumps(result, indent=2))
+    _print_transfer_summary(result)
 
 
 def _cmd_text(argv: list[str]) -> None:
@@ -190,7 +221,12 @@ def _cmd_gif(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="coolled gif", description="Render a GIF and send it.")
     parser.add_argument("path", type=Path)
     parser.add_argument("--fps", type=float, default=None, help="Force a uniform rate (default: the GIF's own timing).")
-    parser.add_argument("--max-frames", type=int, default=120, help="Evenly subsample longer clips.")
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Evenly subsample longer clips (default: the panel's frame-buffer budget).",
+    )
     parser.add_argument("--fit", choices=["contain", "cover", "stretch"], default="contain")
     parser.add_argument("--background", default="black")
     parser.add_argument(
@@ -203,10 +239,13 @@ def _cmd_gif(argv: list[str]) -> None:
     args = parser.parse_args(argv)
     profile = DeviceProfile.load(args.profile)
     studio = PixelAnimationStudio(profile.width, profile.height)
+    per_frame = max(1, profile.width * profile.height * 3 // 8)
+    frame_budget = PIXEL_BYTES_MAX // per_frame
+    max_frames = args.max_frames if args.max_frames is not None else frame_budget
     bundle = studio.create_gif_bundle(
         args.path,
         fps=args.fps,
-        max_frames=args.max_frames,
+        max_frames=max_frames,
         fit_mode=args.fit,
         background=args.background,
         dither=args.dither,

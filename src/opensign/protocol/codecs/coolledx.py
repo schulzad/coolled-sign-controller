@@ -62,6 +62,13 @@ DEFAULT_ANIMATION_SPEED = 512
 FRAME_COUNT_MAX = 0xFF
 PAYLOAD_BYTES_MAX = 0xFFFF
 
+# Device frame buffer, measured on hardware 2026-07-13: the panel accepts and
+# ACKs larger uploads but only *displays* animations whose pixel data fits ~30
+# KiB. At 64x16 (384 B/frame) that is exactly 80 frames -- 80 displays, 81
+# uploads to 100% then shows nothing. This is far below PAYLOAD_BYTES_MAX, so it
+# is the real cap on animation length.
+PIXEL_BYTES_MAX = 30 * 1024  # 30720
+
 
 def escape_stream(data: bytes) -> bytes:
     """Byte-stuff 0x01/0x02/0x03 so they cannot be confused with framing bytes."""
@@ -229,13 +236,27 @@ class CoolLEDXCodec:
 
         frames = frame_bundle.frames
         frame_count = len(frames)
+        per_frame = max(1, self.width * self.height * 3 // PIXELS_PER_BYTE)
+        budget_frames = PIXEL_BYTES_MAX // per_frame
+
+        # Device frame buffer (measured 2026-07-13): a larger animation still
+        # transfers and ACKs cleanly but the panel displays nothing, so reject it
+        # up front instead of letting the user watch a silent no-op.
+        if frame_count * per_frame > PIXEL_BYTES_MAX:
+            raise CodecError(
+                f"Animation is {frame_count} frames x {per_frame} B = "
+                f"{frame_count * per_frame} B of pixel data, over the panel's "
+                f"{PIXEL_BYTES_MAX // 1024} KiB frame buffer (measured 2026-07-13). "
+                f"At {self.width}x{self.height} the ceiling is {budget_frames} frames; "
+                f"a longer clip uploads to 100% then displays nothing. Lower "
+                f"max_frames to {budget_frames} or fewer (or raise fps to drop frames)."
+            )
+        # Structural backstop: the animation header stores frame count in one byte.
         if frame_count > FRAME_COUNT_MAX:
-            per_frame = max(1, self.width * self.height * 3 // PIXELS_PER_BYTE)
             raise CodecError(
                 f"Animation has {frame_count} frames, but CoolLEDX stores the frame "
-                f"count in one byte, so at most {FRAME_COUNT_MAX} frames fit. At "
-                f"{self.width}x{self.height} the payload budget also caps you near "
-                f"{PAYLOAD_BYTES_MAX // per_frame} frames. Lower max_frames or raise fps."
+                f"count in one byte, so at most {FRAME_COUNT_MAX} frames fit. "
+                f"Lower max_frames or raise fps."
             )
 
         animation_speed: int | None = None
@@ -262,7 +283,6 @@ class CoolLEDXCodec:
             raw += pixel_bits
 
         if len(raw) > PAYLOAD_BYTES_MAX:
-            per_frame = max(1, self.width * self.height * 3 // PIXELS_PER_BYTE)
             raise CodecError(
                 f"Encoded payload is {len(raw)} bytes, over the {PAYLOAD_BYTES_MAX}-byte "
                 f"CoolLEDX chunk-length limit (~{PAYLOAD_BYTES_MAX // per_frame} frames at "

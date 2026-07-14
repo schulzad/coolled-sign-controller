@@ -244,13 +244,16 @@ def load_and_fit_image(
     *,
     fit_mode: str = "contain",
     background: str = "black",
+    resample: Image.Resampling | None = None,
 ) -> Image.Image:
     if isinstance(source, Image.Image):
         image = source
     else:
         with Image.open(source) as opened:
             image = opened.convert("RGB")
-    return fit_image(image, width, height, fit_mode=fit_mode, background=background)
+    return fit_image(
+        image, width, height, fit_mode=fit_mode, background=background, resample=resample
+    )
 
 
 def image_from_base64(value: str) -> Image.Image:

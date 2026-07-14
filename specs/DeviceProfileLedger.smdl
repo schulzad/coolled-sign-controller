@@ -274,7 +274,7 @@ Module("DeviceProfileLedger") {
       - Encoding/decoding actual bytes to CoolLEDXProtocol.
       - Physical delivery to GuardedTransport.
     verified_on_hardware: |
-      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) experimental (reference-driver only, no live 0x04 test); frame_streaming rejected; power/speed/mode experimental.
+      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) had its first live test 2026-07-13 (an 80-frame 64x16 clip displayed; 81 did not, pinning the 30 KiB frame buffer) -- promote to verified once that evidence entry is appended to the profile; frame_streaming rejected; power/speed/mode experimental.
     open_work: |
       - JSON Schema file (schema/device_profile.schema.json) to machine-check profiles in CI.
       - A promotion CLI/helper that enforces these transitions instead of hand-editing JSON.
