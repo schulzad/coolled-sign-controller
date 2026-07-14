@@ -27,12 +27,12 @@ Module("SignControlService") {
       }
 
       Directive("/play_text") {
-        description: "Render text (static or scrolling) at the panel geometry and play it."
-        metaphor: "Calling a text cue."
+        description: "Render text and play it. Scrolling text is meant to be the device's NATIVE scroll -- one wide banner the firmware marches across the panel (CoolLEDXProtocol./encode_text_banner + mode 0x06 / speed 0x07), verified on hardware 2026-07-14 -- but is presently compiled as a budget-thinned host-side flipbook via PixelFramePipeline (create_text_bundle); routing scroll=true to native scroll is pending. Static text is a single panel-sized frame."
+        metaphor: "Calling a text cue -- as a ribbon the panel spools itself, or (for now) as a flipbook of panel-sized frames."
         parameters: {
           panel_id: { type: "string", description: "Target panel.", required: true },
           text: { type: "string", description: "Message.", required: true },
-          scroll: { type: "bool", description: "Scroll vs static.", required: false, default: true },
+          scroll: { type: "bool", description: "Scroll vs static. Scrolling targets the firmware's native banner scroll (integration pending).", required: false, default: true },
           execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
         }
         actions: { render: "render_bundle", play: "play_bundle" }
@@ -41,17 +41,20 @@ Module("SignControlService") {
       }
 
       Directive("/play_image") {
-        description: "Fit an image (or base64 image) to the panel and play it as a frame."
-        metaphor: "Calling an image cue."
+        description: "Fit an image (or base64 image) to the panel and play it. As a single static frame by default, or -- when temporal >= 2 -- as a fast temporal-colour (frame-rate-control) subframe loop that fakes intermediate colours (compiled by PixelFramePipeline.compile_temporal_still). Levels (black/white point) apply to both paths."
+        metaphor: "Calling an image cue -- held, or fanned into a flicker so the eye sees shades the panel can't hold."
         parameters: {
           panel_id: { type: "string", description: "Target panel.", required: true },
           image: { type: "Image|string", description: "Image or base64 string.", required: true },
           fit_mode: { type: "string", description: "contain | cover | stretch.", required: false, default: "contain" },
+          temporal: { type: "int", description: "Temporal subframes (N >= 2) for FRC colour; 0 = single static frame.", required: false, default: 0 },
+          black_level: { type: "int", description: "Levels: crush channel values <= this to off before dithering (0-254).", required: false, default: 0 },
+          white_level: { type: "int", description: "Levels: lift channel values >= this to full on (1-255).", required: false, default: 255 },
           execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
         }
         actions: { render: "render_bundle", play: "play_bundle" }
         kernel: "OrchestrationKernel"
-        tags: ["entry", "playback"]
+        tags: ["entry", "playback", "temporal"]
       }
 
       Directive("/play_animation") {
@@ -142,7 +145,7 @@ Module("SignControlService") {
       }
 
       Function("resolve_execute") {
-        description: "Pick the effective execute flag: the per-call override when provided, otherwise the runtime's global gate. Centralizes the single decision of whether real writes are permitted."
+        description: "Pick the effective execute flag: the per-call override when provided, otherwise the runtime's global gate. Centralizes the single decision of whether real writes are permitted. This service (the long-running API/SDK runtime) keeps its global gate OFF by default -- render-only until explicitly armed -- deliberately unlike the one-shot CLIs, which now write by default and take --dry-run to opt out."
         metaphor: "Checking whether the house switch is armed for this cue."
         input_parameters: {
           override: { type: "bool|null", description: "Per-call execute, if any.", required: false }
@@ -155,11 +158,11 @@ Module("SignControlService") {
       }
 
       Function("render_bundle") {
-        description: "Compile a text, image, or animation request into a FrameBundle at panel geometry, applying merged orientation defaults and quantizing to the palette derived from the profile color_mode (DeviceProfileLedger.derive_display_palette). Delegates all compilation to PixelFramePipeline; performs no encoding and no delivery."
-        metaphor: "Building the gobo before the cue, mixing only inks the fixture can throw."
+        description: "Compile a text, image, or animation request into a FrameBundle at panel geometry, applying merged orientation defaults and quantizing to the palette derived from the profile color_mode (DeviceProfileLedger.derive_display_palette). An image request with temporal >= 2 compiles instead to a temporal-colour (FRC) subframe loop timed above the panel's fusion ceiling (PixelFramePipeline.compile_temporal_still); levels (black/white point) apply to both image paths. Delegates all compilation to PixelFramePipeline; performs no encoding and no delivery."
+        metaphor: "Building the gobo before the cue, mixing only inks the fixture can throw -- or fanning one into a flicker for in-between shades."
         input_parameters: {
           state: { type: "PanelState", description: "Target panel.", required: true },
-          request: { type: "object", description: "{type: text|image|animation, value, options}.", required: true }
+          request: { type: "object", description: "{type: text|image|animation, value, options (incl. temporal, black_level, white_level)}.", required: true }
         }
         output_format: { bundle: "FrameBundle Frames sized and quantized to the panel." }
         implementation: |
@@ -169,9 +172,13 @@ Module("SignControlService") {
               palette, _ = derive_display_palette(state.profile.to_dict())
               opts = {**request['options'], 'palette': palette, **orient}
               if request['type'] == 'text':
+                  # pending: scroll=true should encode a native wide banner (0x02) via
+                  # CoolLEDXProtocol + mode/speed, not this budget-thinned flipbook.
                   return studio.create_text_bundle(request['value'], **opts)
               if request['type'] == 'animation':
                   return studio.create_animation_bundle(request['value'], **opts)
+              if request['type'] == 'image' and opts.get('temporal', 0) >= 2:
+                  return studio.create_temporal_image_bundle(request['value'], **opts)  # FRC subframe loop
               return studio.create_image_bundle(request['value'], **opts)
         tags: ["cross-module", "transport-neutral"]
       }
@@ -361,10 +368,12 @@ Module("SignControlService") {
         invariants: [
           "Every mutating request resolves a single effective execute flag (call override else global gate).",
           "Physical writes never happen when the effective execute flag is false.",
+          "This service's global execute gate defaults to off (render-only until explicitly armed); only the one-shot CLIs default execute=true.",
           "In dry-run, an unverified/absent codec downgrades to rendered_only/simulated and never raises; in execute it raises.",
           "A bundle must match the panel geometry before any encoding or delivery.",
           "This is the sole cross-module orchestrator: PixelFramePipeline only compiles bundles; encoding and delivery are delegated to CoolLEDXProtocol + GuardedTransport.",
           "Animated input is bounded (max_frames, max_bytes) before any decode.",
+          "Temporal-colour is an image rendering option compiled by PixelFramePipeline (still -> FRC subframe loop): its subframes / loop_hz / levels are surfaced in diagnostics, and it must beat the profile's fusion ceiling.",
           "The three truths -- host write success, ack telemetry, and observed display confirmation -- are assembled and recorded here, never conflated.",
           "Every request is traced with a correlation id, and artifacts are persisted when an artifact_dir is set."
         ]
@@ -377,12 +386,13 @@ Module("SignControlService") {
     layer: "opensign.sdk -- src/opensign/sdk/runtime.py (OpenSignRuntime) + api.py (FastAPI)"
     owns: |
       - The panel registry and per-panel state (brightness/power/last_delivery/traces).
-      - The global execute gate and per-call override resolution.
+      - The global execute gate (default off -- render-only until armed, unlike the write-by-default one-shot CLIs) and per-call override resolution.
       - Being the sole cross-module orchestrator: compile (PixelFramePipeline) -> encode (CoolLEDXProtocol) -> deliver (GuardedTransport).
       - Bounded media ingest for animated sources (max_frames / max_bytes) before decode.
       - Assembling the three truths: host write success, ack telemetry, and observed display confirmation.
+      - Temporal-colour (FRC) as an image-playback option (subframes + black/white levels), with its subframes/loop_hz surfaced in diagnostics.
       - Request tracing, artifact persistence, scheduler and integrations surface.
-      - The HTTP endpoints: /status, /text, /image, /animation, /bundle, /brightness, /power.
+      - The HTTP endpoints: /status, /text, /image (static or temporal), /animation, /bundle, /brightness, /power.
     delegates: |
       - Compilation (text/image/animation -> hashed, quantized bundle) to PixelFramePipeline, which no longer orchestrates delivery.
       - Encoding + delivery to ProtocolRuntime -> CoolLEDXProtocol + GuardedTransport.
@@ -390,6 +400,7 @@ Module("SignControlService") {
     verified_on_hardware: |
       - The runtime path (upload_frame_bundle / send_control) drove verified brightness and image playback; the API wraps the same runtime.
     open_work: |
+      - Route scrolling text (scroll=true) through ProtocolRuntime.play_native_text (CLI coolled text already does; SDK/API still on the host flipbook).
       - Auth / rate-limiting on the FastAPI surface before any non-local exposure.
       - Animation playlists (queue multiple stored animations) plus per-animation compile diagnostics surfaced in /status and traces.
       - Surface ack telemetry (acks_received / naks / ack_timeouts / nak_retries) into /status and traces.

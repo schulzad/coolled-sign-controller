@@ -3,7 +3,8 @@
 A thin umbrella over the focused entry points. Discovery, preview, and service
 commands delegate to their existing CLIs; ``text``/``image``/``gif`` are one-shot
 render-and-send helpers built on the animation studio and the protocol runtime.
-Physical BLE writes always require an explicit ``--execute`` flag.
+These send to the panel by default; pass ``--dry-run`` to build the transfer
+plan (and any preview/bundle) without touching Bluetooth.
 """
 
 from __future__ import annotations
@@ -18,9 +19,16 @@ from pathlib import Path
 
 import opensign.protocol  # noqa: F401  (registers bundled device codecs)
 from opensign.animation.preview import save_preview
+from opensign.animation.render import render_wide_text
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile
-from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
+from opensign.protocol.codecs.coolledx import (
+    MODE_LEFT,
+    PIXEL_BYTES_MAX,
+    USER_SCROLL_SPEED_MAX,
+    USER_SCROLL_SPEED_MIN,
+    map_user_scroll_speed,
+)
 from opensign.protocol.runtime import ProtocolRuntime
 
 DEFAULT_PROFILE = Path("device_profile.local.json")
@@ -43,8 +51,8 @@ Discovery (read-only):
   scan                 Scan for CoolLED panels and rank candidates
   inspect <id>         Inspect one device's GATT and draft a profile
 
-Render + send (BLE writes require --execute):
-  text "MESSAGE"       Render text (scrolling by default) and send
+Render + send (writes to the panel; --dry-run to preview):
+  text "MESSAGE"       Native scroll text by default (--speed 0-10); --no-scroll for static
   image <path>         Fit an image to the panel and send
   gif <path>           Render a GIF at its own frame rate and send
   send <bundle.json>   Send a prepared frame bundle
@@ -62,7 +70,11 @@ Run 'coolled <command> --help' for a command's options.
 
 def _add_common_send_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
-    parser.add_argument("--execute", action="store_true", help="Perform physical BLE writes.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build the transfer plan (and preview/bundle) without any BLE writes.",
+    )
     parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0)
     parser.add_argument("--flip-horizontal", action="store_true")
     parser.add_argument("--flip-vertical", action="store_true")
@@ -100,6 +112,52 @@ def _print_transfer_summary(result: dict) -> None:
     print("\n".join(lines), file=sys.stderr)
 
 
+def _print_image_diagnostics(bundle) -> None:
+    """Surface levels + which channels can actually light, on stderr.
+
+    Auto-levels picks values the user never sees otherwise, and a low-contrast
+    source often can only render one colour (red/blue below the 1-bit threshold),
+    which is the usual reason an image looks dim -- name it so the fix (auto/manual
+    levels) is obvious.
+    """
+    meta = bundle.metadata
+    levels = meta.get("levels")
+    if levels and (levels.get("auto") or levels.get("black", 0) or levels.get("white", 255) != 255):
+        tag = " (auto)" if levels.get("auto") else ""
+        print(f"levels: black={levels.get('black')} white={levels.get('white')}{tag}", file=sys.stderr)
+    reachable = meta.get("reachable_channels")
+    if reachable is not None:
+        dark = [c for c in ("red", "green", "blue") if c not in reachable]
+        if dark:
+            lit = ", ".join(reachable) if reachable else "nothing"
+            print(
+                f"note: on this panel this image can only light {lit}; "
+                f"{', '.join(dark)} stay below the 1-bit threshold "
+                f"(try --auto-levels, or raise --white-level)",
+                file=sys.stderr,
+            )
+
+
+def _print_native_text_summary(result: dict) -> None:
+    """Digest for native text scroll (banner + SPEED + MODE on one session)."""
+    meta = result.get("native_text", {})
+    banner_meta = result.get("encoded", {}).get("banner", {}).get("metadata", {})
+    transfers = result.get("transfers", [])
+    banner_xfer = next((t["transfer"] for t in transfers if t.get("step") == "banner"), {})
+    lines = [
+        "-- transfer summary --",
+        f"opcode={banner_meta.get('opcode')} native_text "
+        f"banner={meta.get('banner_width')}x{banner_meta.get('banner_height')} "
+        f"payload={banner_meta.get('payload_bytes')}B",
+        f"user_speed={meta.get('user_speed')} -> device_speed={meta.get('device_speed')} "
+        f"mode={meta.get('mode')}",
+        f"banner success={banner_xfer.get('success')} dry_run={banner_xfer.get('dry_run')} "
+        f"packets={banner_xfer.get('packet_count')} acks={banner_xfer.get('acks_received')} "
+        f"timeouts={banner_xfer.get('ack_timeouts')}",
+    ]
+    print("\n".join(lines), file=sys.stderr)
+
+
 def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
     if args.preview:
         save_preview(bundle, args.preview, scale=8)
@@ -108,7 +166,7 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
     result = asyncio.run(
         ProtocolRuntime(profile).upload_frame_bundle(
             bundle,
-            execute=args.execute,
+            execute=not args.dry_run,
             retry_limit=args.retry_limit,
             timeout_seconds=args.timeout,
         )
@@ -118,27 +176,115 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
 
 
 def _cmd_text(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(prog="coolled text", description="Render text and send it.")
+    parser = argparse.ArgumentParser(
+        prog="coolled text",
+        description="Send text to the panel. Scrolling uses the device's native scroll "
+        "(one wide bitmap + SPEED/MODE); --no-scroll sends a single static frame.",
+    )
     parser.add_argument("text")
-    parser.add_argument("--no-scroll", action="store_true", help="Render a single static frame.")
-    parser.add_argument("--fps", type=float, default=12.0)
+    parser.add_argument("--no-scroll", action="store_true", help="Render a single static frame (image opcode).")
+    parser.add_argument(
+        "--speed",
+        type=int,
+        default=8,
+        metavar="N",
+        help=f"Native scroll speed {USER_SCROLL_SPEED_MIN}..{USER_SCROLL_SPEED_MAX} "
+        f"(higher=faster; default 8). Ignored with --no-scroll / --flipbook.",
+    )
+    parser.add_argument(
+        "--mode",
+        type=int,
+        default=MODE_LEFT,
+        help="Native scroll MODE byte (default 2=left). Ignored with --no-scroll / --flipbook.",
+    )
+    parser.add_argument(
+        "--flipbook",
+        action="store_true",
+        help="Use the host-side scroll flipbook (legacy) instead of native firmware scroll.",
+    )
+    parser.add_argument("--fps", type=float, default=12.0, help="Flipbook frame rate (only with --flipbook).")
     parser.add_argument("--foreground", default="white")
     parser.add_argument("--background", default="black")
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Cap flipbook frames (only with --flipbook; default: panel frame-buffer budget).",
+    )
     _add_common_send_arguments(parser)
     args = parser.parse_args(argv)
+    if not args.no_scroll and not args.flipbook:
+        if args.speed < USER_SCROLL_SPEED_MIN or args.speed > USER_SCROLL_SPEED_MAX:
+            parser.error(f"--speed must be {USER_SCROLL_SPEED_MIN}..{USER_SCROLL_SPEED_MAX}")
+
     profile = DeviceProfile.load(args.profile)
-    studio = PixelAnimationStudio(profile.width, profile.height)
-    bundle = studio.create_text_bundle(
+
+    if args.no_scroll or args.flipbook:
+        studio = PixelAnimationStudio(profile.width, profile.height)
+        per_frame = max(1, profile.width * profile.height * 3 // 8)
+        frame_budget = PIXEL_BYTES_MAX // per_frame
+        max_frames = args.max_frames if args.max_frames is not None else frame_budget
+        bundle = studio.create_text_bundle(
+            args.text,
+            scroll=not args.no_scroll,
+            frames_per_second=args.fps,
+            foreground=args.foreground,
+            background=args.background,
+            max_frames=None if args.no_scroll else max_frames,
+            rotation=args.rotate,
+            flip_horizontal=args.flip_horizontal,
+            flip_vertical=args.flip_vertical,
+        )
+        _finish(profile, bundle, args)
+        return
+
+    # Native firmware scroll: one wide banner + SPEED + MODE.
+    banner = render_wide_text(
         args.text,
-        scroll=not args.no_scroll,
-        frames_per_second=args.fps,
+        profile.height,
         foreground=args.foreground,
         background=args.background,
-        rotation=args.rotate,
-        flip_horizontal=args.flip_horizontal,
-        flip_vertical=args.flip_vertical,
     )
-    _finish(profile, bundle, args)
+    if args.rotate or args.flip_horizontal or args.flip_vertical:
+        # Orientation applies to the banner bitmap before encode; 90/270 change
+        # which axis is "wide", so refuse those for native scroll.
+        if args.rotate in (90, 270):
+            raise ValueError("native scroll does not support --rotate 90/270; use --no-scroll or --flipbook")
+        from PIL import Image as _Image
+
+        if args.rotate == 180:
+            banner = banner.transpose(_Image.Transpose.ROTATE_180)
+        if args.flip_horizontal:
+            banner = banner.transpose(_Image.Transpose.FLIP_LEFT_RIGHT)
+        if args.flip_vertical:
+            banner = banner.transpose(_Image.Transpose.FLIP_TOP_BOTTOM)
+
+    if args.preview:
+        args.preview.parent.mkdir(parents=True, exist_ok=True)
+        banner.save(args.preview)
+    if args.bundle_out:
+        print("note: --bundle-out is ignored for native scroll (no FrameBundle)", file=sys.stderr)
+
+    device_speed = map_user_scroll_speed(args.speed)
+    print(
+        f"native scroll: banner {banner.width}x{banner.height}, "
+        f"user_speed={args.speed} -> device_speed={device_speed}, mode={args.mode}",
+        file=sys.stderr,
+    )
+    result = asyncio.run(
+        ProtocolRuntime(profile).play_native_text(
+            args.text,
+            banner.tobytes(),
+            banner.width,
+            speed=args.speed,
+            mode=args.mode,
+            execute=not args.dry_run,
+            retry_limit=args.retry_limit,
+            timeout_seconds=args.timeout,
+        )
+    )
+    print(json.dumps(result, indent=2))
+    _print_native_text_summary(result)
 
 
 def _cmd_image(argv: list[str]) -> None:
@@ -185,6 +331,16 @@ def _cmd_image(argv: list[str]) -> None:
         metavar="V",
         help="Lift channel values >= V to full on before dithering (boosts muted foregrounds).",
     )
+    parser.add_argument(
+        "--auto-levels",
+        action="store_true",
+        help=(
+            "Auto contrast-stretch from the image's own histogram (crushes dark "
+            "backgrounds, lifts muted foregrounds) so low-contrast art -- logos, "
+            "UI badges, screenshots -- reads on the panel. Overrides "
+            "--black-level/--white-level."
+        ),
+    )
     _add_common_send_arguments(parser)
     args = parser.parse_args(argv)
     profile = DeviceProfile.load(args.profile)
@@ -195,6 +351,7 @@ def _cmd_image(argv: list[str]) -> None:
             subframes=args.temporal,
             fit_mode=args.fit,
             background=args.background,
+            auto_levels=args.auto_levels,
             black_point=args.black_level,
             white_point=args.white_level,
             rotation=args.rotate,
@@ -208,12 +365,14 @@ def _cmd_image(argv: list[str]) -> None:
             background=args.background,
             duration_ms=args.duration_ms,
             dither=args.dither,
+            auto_levels=args.auto_levels,
             black_point=args.black_level,
             white_point=args.white_level,
             rotation=args.rotate,
             flip_horizontal=args.flip_horizontal,
             flip_vertical=args.flip_vertical,
         )
+    _print_image_diagnostics(bundle)
     _finish(profile, bundle, args)
 
 

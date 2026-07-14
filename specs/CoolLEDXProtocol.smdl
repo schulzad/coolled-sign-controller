@@ -1,7 +1,7 @@
 Seedscript module description language 2.3
 
 Module("CoolLEDXProtocol") {
-  description: "Encode commands for a CoolLEDX BLE LED sign into wire-ready packets. Frames the byte stream (0x01 start, byte-stuffed length+payload, 0x03 end), builds control commands, packs RGB frames into column-major 1-bit R/G/B planes, and splits them into 128-byte checksummed chunks. Emits a delivery flow_control hint (await per-chunk ack) that the generic GuardedTransport honors -- this module owns encoding, not the BLE writes. Verified on physical hardware (panel ff:00:00:06:6f:82, CoolLEDX fw6, 64x16, 7-color) on 2026-07-13."
+  description: "Encode commands for a CoolLEDX BLE LED sign into wire-ready packets. Frames the byte stream (0x01 start, byte-stuffed length+payload, 0x03 end), builds control commands, packs RGB frames into column-major 1-bit R/G/B planes, and splits them into 128-byte checksummed chunks. Text scrolling is NATIVE: a message is one wide bitmap sent under the text opcode 0x02 and the firmware marches it across the panel (mode 0x06 / speed 0x07), rather than a host-side flipbook. Emits a delivery flow_control hint (await per-chunk ack) that the generic GuardedTransport honors -- this module owns encoding, not the BLE writes. Verified on physical hardware (panel ff:00:00:06:6f:82, CoolLEDX fw6, 64x16, 7-color): brightness/image/animation on 2026-07-13, native text scroll on 2026-07-14."
   metaphor: "A telegraph operator composing framed messages, marking which ones need a return click before the next is sent."
   version: "2.3"
   tags: ['ble', 'coolledx', 'protocol', 'codec', 'layer:protocol', 'verified-hardware']
@@ -36,12 +36,24 @@ Module("CoolLEDXProtocol") {
         tags: ["entry", "frame"]
       }
 
+      Directive("/encode_text_banner") {
+        description: "Pack a PRE-RENDERED wide bitmap (natural glyph width, panel height) as the device's NATIVE scroll under the text opcode 0x02, so the firmware -- not a host-side flipbook -- marches it across the panel. Rendering the message to that bitmap is PixelFramePipeline's job; this directive receives the finished bitmap and the original text (only its length feeds the header) and does not rasterize glyphs itself. The wire payload is byte-identical to a static image (0x03) except (a) the opcode and (b) an 81-byte text header inserted after the 24 reserved bytes: a 1-byte length (2-byte when text > 255) then an 80/79-byte buffer whose first N bytes are 0x30. Width is IMPLICIT -- nothing in the header stores it; the device derives it from the pixel-byte count -- so a wider-than-panel banner is simply more pixel bytes. Motion and cadence are NOT set here; they are separate control commands (mode 0x06, speed 0x07). Proven on hardware 2026-07-14 (the banner scrolled) via scripts/native_scroll_experiment.py; contract specified here, codec-class integration + text-intent routing pending."
+        metaphor: "Sealing a message someone else wrote on one long ribbon, letting the reader's spool do the scrolling."
+        parameters: {
+          banner: { type: "bytes|FrameBundle", description: "Pre-rendered wide RGB888 bitmap (natural glyph width, panel height) from PixelFramePipeline.", required: true },
+          text: { type: "string", description: "Original message; only its length feeds the 81-byte text header (the bitmap is what actually renders).", required: true }
+        }
+        actions: { build: "build_text_banner_payload", chunk: "chop_into_chunks", pace: "attach_flow_control" }
+        kernel: "TransportKernel"
+        tags: ["entry", "text", "native-scroll", "verified-hardware"]
+      }
+
       Directive("/transfer") {
-        description: "Hand framed packets plus their flow_control hint to the generic GuardedTransport. Dry-run by default; physical writes require an explicit execute flag. This directive is a boundary, not an implementation -- the actual BLE writes and ack handshake live in GuardedTransport."
+        description: "Hand framed packets plus their flow_control hint to the generic GuardedTransport. The execute flag alone gates real writes vs a byte-exact plan, and still defaults to false at this boundary -- but the one-shot CLIs (coolled text/image/gif, opensign-send) now pass execute=true by default and take --dry-run to opt out; only the long-running API server (SignControlService) stays render-only until armed. This directive is a boundary, not an implementation -- the actual BLE writes and ack handshake live in GuardedTransport."
         metaphor: "Passing the sealed pages to the operator at the key."
         parameters: {
           encoded: { type: "EncodedPayload", description: "Packets + flow_control from an encode directive.", required: true },
-          execute: { type: "bool", description: "When true, perform real BLE writes.", required: false, default: false }
+          execute: { type: "bool", description: "When true, perform real BLE writes. CLI entry points default this to true (--dry-run flips it back); the API server defaults it to false.", required: false, default: false }
         }
         actions: { deliver: "handoff_to_transport" }
         kernel: "TransportKernel"
@@ -94,7 +106,7 @@ Module("CoolLEDXProtocol") {
       }
 
       Function("build_control_payload") {
-        description: "Map a control command name to its opcode and argument byte(s): brightness=0x08 (0-100 percent -> 0-255), power/switch=0x09 (01/00), power_on=0x13, power_down=0x12, speed=0x07, mode=0x06, invert=0x0C."
+        description: "Map a control command name to its opcode and argument byte(s): brightness=0x08 (0-100 percent -> 0-255), power/switch=0x09 (01/00), power_on=0x13, power_down=0x12, speed=0x07, mode=0x06, invert=0x0C. The mode argument selects the firmware's native text-movement style (Mode enum: 1=static, 2=left, 3=right, 4=up, 5=down, 6=snowflake, 7=picture, 8=laser); mode=2 (scroll left) is verified on hardware 2026-07-14. The speed byte (0x07, 0-255) sets native text-scroll rate: HIGHER = FASTER (verified 2026-07-14 via --speed-sweep; 255 is fast but readable). This polarity is the OPPOSITE of the animation payload's coolledx_speed field (ms/frame, smaller = faster)."
         metaphor: "Choosing the right coded pulse."
         input_parameters: {
           command: { type: "string", description: "Command name.", required: true },
@@ -113,7 +125,7 @@ Module("CoolLEDXProtocol") {
               if command == 'power_down':
                   return bytes([0x12])
               if command == 'speed':
-                  return bytes([0x07, int(value) & 0xFF])
+                  return bytes([0x07, int(value) & 0xFF])   # higher = faster native scroll
               if command == 'mode':
                   return bytes([0x06, int(value) & 0xFF])
               if command in ('invert', 'invert_display'):
@@ -152,8 +164,8 @@ Module("CoolLEDXProtocol") {
         description: "Split a frame payload into framed 128-byte chunks. Each chunk: opcode || 0x00 || total_len_be16 || chunk_index_be16 || chunk_size_u8 || data || xor, then wrapped by frame_payload."
         metaphor: "Numbering and sealing each page of a long telegram."
         input_parameters: {
-          data: { type: "bytes", description: "Full frame payload (header + bit planes).", required: true },
-          opcode: { type: "int", description: "0x03 image or 0x04 animation.", required: true }
+          data: { type: "bytes", description: "Full payload (header + bit planes); for text the header includes the 81-byte text block.", required: true },
+          opcode: { type: "int", description: "0x02 text (native scroll banner), 0x03 image, or 0x04 animation.", required: true }
         }
         output_format: { chunks: "array[bytes] Framed, checksummed chunks in order." }
         implementation: |
@@ -169,8 +181,37 @@ Module("CoolLEDXProtocol") {
         tags: ["verified-hardware"]
       }
 
+      Function("build_text_banner_payload") {
+        description: "Build the un-chunked native-text payload for one wide bitmap. Layout mirrors the reference driver's create_image_output(text=...): 24 reserved zero bytes, then the text header (1-byte length + 80-byte 0x30-filled buffer for len <= 255; 2-byte length + 79-byte buffer above that -- always 81 bytes), then a 2-byte pixel length and the column-major R||G||B planes from pixel_bitplanes. Identical to the static-image payload apart from that 81-byte header. Chunked under opcode 0x02 by chop_into_chunks; the banner width is carried implicitly by the plane byte count, so it may exceed the panel width."
+        metaphor: "Addressing the ribbon: a short preamble the reader ignores, then the whole picture."
+        input_parameters: {
+          text: { type: "string", description: "Message (its length drives the header).", required: true },
+          frame: { type: "bytes", description: "Wide RGB888 bitmap, width*height*3, at the natural glyph width.", required: true },
+          width: { type: "int", description: "Banner width in pixels (may exceed the panel).", required: true },
+          height: { type: "int", description: "Panel height (multiple of 8).", required: true }
+        }
+        output_format: { payload: "bytes 24 reserved + 81 text-header + 2 len + R/G/B planes." }
+        implementation: |
+          def build_text_banner_payload(text, frame, width, height):
+              r, g, b = pixel_bitplanes(frame, width, height)   # width may exceed the panel
+              planes = r + g + b
+              raw = bytearray(24)                               # reserved (purpose unconfirmed)
+              n = len(text)
+              if n <= 0xFF:
+                  raw += bytes([n]); buf = bytearray(80)
+              else:
+                  raw += n.to_bytes(2, 'big'); buf = bytearray(79)
+              for i in range(min(n, len(buf))):
+                  buf[i] = 0x30                                 # reference fills with '0'; the bitmap is what renders
+              raw += buf
+              raw += len(planes).to_bytes(2, 'big')             # device infers width from this count
+              raw += planes
+              return bytes(raw)                                 # -> chop_into_chunks(raw, 0x02)
+        tags: ["pure", "text", "native-scroll", "verified-hardware"]
+      }
+
       Function("preflight_frame_bundle") {
-        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. The BINDING cap is the device frame buffer measured on hardware 2026-07-13: pixel-plane data must fit 30 KiB (PIXEL_BYTES_MAX = 30720 bytes), which at 64x16 (384 bytes/frame) is exactly 80 frames -- 80 displays, 81 uploads to 100% then shows nothing on the panel. Two structural caps also apply but are looser at this geometry: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535). Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected."
+        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. The BINDING cap is the device frame buffer measured on hardware 2026-07-13: pixel-plane data must fit 30 KiB (PIXEL_BYTES_MAX = 30720 bytes), which at 64x16 (384 bytes/frame) is exactly 80 frames -- 80 displays, 81 uploads to 100% then shows nothing on the panel. Two structural caps also apply but are looser at this geometry: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535). Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected. The single global speed is the per-frame hold time in milliseconds (hardware-calibrated); a temporal-colour (frame-rate-control) still arrives as an ordinary multi-frame 0x04 bundle whose small ms/frame is chosen upstream to beat the panel's flicker-fusion ceiling -- the codec carries that speed unchanged and adds no new opcode."
         metaphor: "Weighing the pages before sealing them, refusing a book that will not fit the pouch."
         input_parameters: {
           frame_bundle: { type: "FrameBundle", description: "RGB888 frames at panel geometry.", required: true },
@@ -260,6 +301,19 @@ Module("CoolLEDXProtocol") {
         tags: ["pipe"]
       }
 
+      Chain("TextBannerEncodeFlow") {
+        description: "Text string -> one wide bitmap -> native-text payload (0x02, +81-byte header) -> numbered, checksummed, framed chunks -> await-ack pacing. Motion and cadence stay separate control commands (mode 0x06 / speed 0x07) on ControlEncodeFlow."
+        metaphor: "One long ribbon, numbered and sealed; the spool speed is a separate lever."
+        links: [
+          { source: "/encode_text_banner", target: "build_text_banner_payload", description: "Wide bitmap + 81-byte text header." },
+          { source: "build_text_banner_payload", target: "pixel_bitplanes", description: "Pack the wide RGB into 1-bit planes (width implicit)." },
+          { source: "build_text_banner_payload", target: "chop_into_chunks", description: "Header, split, checksum under opcode 0x02." },
+          { source: "chop_into_chunks", target: "frame_payload", description: "Frame each chunk." },
+          { source: "/encode_text_banner", target: "attach_flow_control", description: "Mark per-packet await-ack (chunked like an image)." }
+        ]
+        tags: ["pipe", "text", "native-scroll"]
+      }
+
       Chain("DeliveryHandoffFlow") {
         description: "Encoded packets + flow_control -> GuardedTransport (guarded, ack-paced delivery)."
         metaphor: "Pass to the operator; they tap and listen for each click."
@@ -274,14 +328,17 @@ Module("CoolLEDXProtocol") {
       Kernel("TransportKernel") {
         description: "Governs CoolLEDX encoding and the pacing contract; owns the wire format and hands delivery to GuardedTransport."
         metaphor: "The operator who owns the codebook and marks which messages need a receipt."
-        directive_chains: ['ControlEncodeFlow', 'FrameEncodeFlow', 'DeliveryHandoffFlow']
+        directive_chains: ['ControlEncodeFlow', 'FrameEncodeFlow', 'TextBannerEncodeFlow', 'DeliveryHandoffFlow']
         invariants: [
           "Every wire packet is 0x01 || escape(len_be16 || payload) || 0x03.",
           "Reserved bytes 0x01/0x02/0x03 in payloads are always byte-stuffed via the 0x02 escape.",
           "Frame transfers are chunked at 128 data bytes with an XOR checksum per chunk.",
           "Animation payloads are preflighted against the measured 30 KiB device frame buffer (binding cap: 80 frames at 64x16) plus the structural caps (frame_count <= 255; 16-bit total-length <= 65535 bytes); over-budget bundles are rejected, never truncated.",
           "The device carries one global animation speed; per-frame timing is resampled upstream (PixelFramePipeline) and collapsed to a single speed here, or rejected.",
-          "Input frames must already be quantized to the panel palette; packing is 1 bit per channel (8 wire color states) and does not itself dither.",
+          "The single global speed is the per-frame hold time in milliseconds (hardware-calibrated); temporal-colour (FRC) stills are ordinary 0x04 bundles carried unchanged at a small ms/frame, and this module neither computes nor enforces the fusion ceiling -- that timing decision lives in PixelFramePipeline/DeviceProfileLedger.",
+          "Input frames must already be quantized to the panel palette; packing is 1 bit per channel (8 wire color states) and does not itself dither -- temporal (FRC) stills arrive pre-binarized as one 0x04 loop.",
+          "Native text scroll is a single wide bitmap under opcode 0x02: byte-identical to a static image (0x03) plus an 81-byte text header, with banner width carried implicitly by the pixel-byte count; the firmware scrolls it, so the host never rasterizes a per-column flipbook.",
+          "Text movement and cadence are separate control commands -- mode (0x06; Mode enum, 2=left verified 2026-07-14) and speed (0x07; byte, higher=faster verified 2026-07-14; opposite polarity from animation ms/frame) -- never fields of the text payload.",
           "Frame-transfer EncodedPayloads carry flow_control.await_ack=true; control payloads carry an empty flow_control.",
           "This module never performs BLE writes; delivery and the ack handshake belong to GuardedTransport.",
           "Byte-for-byte encoding of brightness (0x08), image (0x03), and animation (0x04) is verified against real hardware -- 0x04 confirmed 2026-07-13: an 80-frame 64x16 clip displayed while 81 frames uploaded but did not, pinning the 30 KiB frame buffer."
@@ -295,8 +352,10 @@ Module("CoolLEDXProtocol") {
     layer: "opensign.protocol (codec) -- src/opensign/protocol/codecs/coolledx.py"
     owns: |
       - Wire framing and byte-stuffing for CoolLEDX-family signs.
-      - Control opcode table and argument encoding.
+      - Control opcode table and argument encoding (incl. the mode 0x06 / speed 0x07 movement commands).
       - Column-major bitplane packing and 128-byte checksummed chunking.
+      - Native text-scroll encoding: one wide bitmap under opcode 0x02 (static-image payload + 81-byte text header, implicit width); motion/cadence handed to the mode/speed control opcodes, not baked into the payload.
+      - Carrying the single global animation speed (per-frame hold time in ms) unchanged; temporal-colour (FRC) stills are ordinary 0x04 bundles here.
       - Emitting the delivery flow_control hint on EncodedPayload.
     delegates: |
       - All BLE connection, chunking-to-MTU, writes, and the per-chunk ack
@@ -309,9 +368,19 @@ Module("CoolLEDXProtocol") {
         rendered; 81 frames uploaded to 100% but showed nothing, pinning the device
         frame buffer at 30 KiB (30720 B of pixel data). Now enforced in preflight
         (PIXEL_BYTES_MAX) and used as the gif max-frames default.
+      - Native text scroll (0x02 wide banner + mode=left 0x06) scrolled on hardware
+        2026-07-14 via scripts/native_scroll_experiment.py, confirming the firmware
+        scrolls a single wide bitmap and that the image (0x03) and text (0x02) payloads
+        differ only by the 81-byte text header + opcode. Codec ``encode_text_banner``
+        and CLI ``coolled text --speed 0..10`` now use this path.
+      - SPEED control byte (0x07) calibrated 2026-07-14 via --speed-sweep
+        (0,1,8,32,64,128,200,255): higher byte = faster native scroll; 255 is fast
+        but readable. Polarity is the OPPOSITE of animation coolledx_speed (ms/frame).
+        User-facing CLI maps 0..10 linearly onto 0..255.
     open_work: |
       - Confirm power/switch (0x09) vs power_on (0x13)/power_down (0x12) semantics.
       - Decode and assert on the ack status byte (0x00 success vs 0x06 checksum error) instead of treating any notification as success (host currently surfaces distinct notifications but does not yet decode NAK).
+      - Route SignControlService / SDK ``play_text(scroll=true)`` through ``play_native_text`` (CLI ``coolled text`` already uses native scroll + ``--speed 0..10``).
       - Explore 7-color vs full-RGB packing beyond the 1-bit threshold.
   }
 }

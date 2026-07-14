@@ -25,7 +25,7 @@ Module("GuardedTransport") {
       }
 
       Directive("/deliver") {
-        description: "Guarded physical delivery: connect, subscribe to notifications, write every chunk, and (when flow_control.await_ack) wait for each per-packet ack. Requires an explicit execute flag from the caller."
+        description: "Guarded physical delivery: connect, subscribe to notifications, write every chunk, and (when flow_control.await_ack) wait for each per-packet ack. Requires an explicit execute flag from the caller -- the transport never sets that flag's default. Callers do: the one-shot CLIs (coolled text/image/gif, opensign-send) pass execute=true by default and take --dry-run to opt out, while the long-running API server defaults to false (render-only until armed)."
         metaphor: "Actually mailing the pages and collecting signatures."
         parameters: {
           encoded: { type: "EncodedPayload", description: "Framed packets + flow_control.", required: true },
@@ -287,13 +287,13 @@ Module("GuardedTransport") {
       - The per-packet ack handshake (count+event, race-safe) driven by flow_control, incl. decoding acks via a codec-supplied decoder and re-sending NAKed packets.
       - TransferResult telemetry: host success vs acks_received / naks / ack_timeouts / nak_retries.
       - Serializing per-panel uploads and enforcing a transfer deadline with progress/cancellation for large animations.
-      - Execute gating: DryRunTransport (plan) vs BleakTransport (writes).
+      - Execute gating on a caller-supplied flag: DryRunTransport (plan) when execute=false vs BleakTransport (writes) when execute=true; the flag's default is set at the entry point (CLI write-by-default, API render-only), never here.
     delegates: |
       - Packet contents, opcodes, framing, and the flow_control values to the device codec (CoolLEDXProtocol).
       - Which profile/characteristics to use to DeviceProfileLedger.
     verified_on_hardware: |
       - Ack-paced image transfer: acks_received=4, ack_timeouts=0 for a 4-chunk frame.
-      - Standard opensign-send bundle --execute path drives the panel end to end.
+      - The opensign-send bundle path (now write-by-default; --dry-run produces the plan) drives the panel end to end, including the native text-scroll banner (0x02) verified 2026-07-14.
     open_work: |
       - Wire the codec-supplied ack decoder (CoolLEDXProtocol) into send_packets and exercise NAK re-send on hardware (contract specified here, code pending).
       - Tune the animation transfer deadline / progress / cancellation for ~500-chunk uploads.

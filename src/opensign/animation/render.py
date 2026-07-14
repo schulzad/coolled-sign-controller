@@ -5,7 +5,7 @@ import io
 from pathlib import Path
 from typing import Iterable
 
-from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFont, ImageOps
 
 
 def parse_color(value: str | tuple[int, int, int]) -> tuple[int, int, int]:
@@ -166,6 +166,40 @@ def render_static_text(
     x = (width - (right - left)) // 2 - left
     y = (height - (bottom - top)) // 2 - top
     draw.text((x, y), text, font=font, fill=parse_color(foreground))
+    return image
+
+
+def render_wide_text(
+    text: str,
+    height: int,
+    *,
+    foreground: str = "white",
+    background: str = "black",
+    font_size: int | None = None,
+) -> Image.Image:
+    """Render ``text`` to one wide RGB bitmap at panel height (native scroll banner).
+
+    Width is the natural glyph width -- often wider than the panel. The firmware
+    marches this single bitmap across the display (opcode 0x02), so the host never
+    builds a per-pixel flipbook.
+    """
+    if not text:
+        raise ValueError("text cannot be empty")
+    if height <= 0:
+        raise ValueError("height must be positive")
+    size = font_size if font_size and font_size > 0 else height
+    try:
+        font: ImageFont.ImageFont = ImageFont.load_default(size=size)  # Pillow >= 10
+    except TypeError:  # pragma: no cover - older Pillow
+        font = ImageFont.load_default()
+
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    left, top, right, bottom = probe.textbbox((0, 0), text, font=font)
+    text_width = max(1, right - left)
+    image = Image.new("RGB", (text_width, height), parse_color(background))
+    draw = ImageDraw.Draw(image)
+    y = (height - (bottom - top)) // 2 - top
+    draw.text((-left, y), text, font=font, fill=parse_color(foreground))
     return image
 
 
@@ -364,6 +398,59 @@ def apply_levels(
     lut = [max(0, min(255, round((value - black_point) * 255 / span))) for value in range(256)]
     bands = [band.point(lut) for band in image.convert("RGB").split()]
     return Image.merge("RGB", bands)
+
+
+def compute_auto_levels(image: Image.Image, *, cutoff_percent: float = 2.0) -> tuple[int, int]:
+    """Derive (black_point, white_point) that contrast-stretch an image for the panel.
+
+    Clips ``cutoff_percent`` of pixels off each end of the per-pixel VALUE (max
+    channel, i.e. HSV V) histogram. Value rather than luminance so coloured
+    content on a dark ground -- e.g. green text -- keeps a high white point and
+    stays saturated instead of washing toward white. Feed this the SOURCE image
+    (before fitting) so ``contain`` letterbox bars do not peg the black point to
+    0. Returns ``(0, 255)`` for a flat/degenerate image so ``apply_levels`` is a
+    no-op, and never returns a black point at or above the white point.
+    """
+    rgb = image.convert("RGB")
+    red, green, blue = rgb.split()
+    value = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    histogram = value.histogram()
+    total = sum(histogram)
+    if total == 0:
+        return 0, 255
+    cut = total * max(0.0, cutoff_percent) / 100.0
+
+    black, seen = 0, 0
+    for level, count in enumerate(histogram):
+        seen += count
+        if seen > cut:
+            black = level
+            break
+    white, seen = 255, 0
+    for level in range(255, -1, -1):
+        seen += histogram[level]
+        if seen > cut:
+            white = level
+            break
+    if white <= black:
+        return 0, 255
+    return black, white
+
+
+def reachable_channels(image: Image.Image, *, threshold: int = 127) -> list[str]:
+    """Channels that can actually light on the panel for this image.
+
+    A channel is reachable when at least one pixel exceeds the codec's per-channel
+    on/off threshold (mirrors coolledx ``_pixel_bitplanes``' ``> 127``). Lets a
+    caller warn when, say, red and blue never cross -- so the image can only ever
+    render green -- which is the usual reason a low-contrast source looks dim.
+    """
+    rgb = image.convert("RGB")
+    return [
+        name
+        for band, name in zip(rgb.split(), ("red", "green", "blue"), strict=True)
+        if band.getextrema()[1] > threshold
+    ]
 
 
 def quantize_to_panel(image: Image.Image, mode: str = "ordered") -> Image.Image:
