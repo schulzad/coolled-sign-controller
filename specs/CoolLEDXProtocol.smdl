@@ -170,7 +170,7 @@ Module("CoolLEDXProtocol") {
       }
 
       Function("preflight_frame_bundle") {
-        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. Two hard caps apply: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535), which for 64x16 (384 bytes/frame) caps N at 170. Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected."
+        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. The BINDING cap is the device frame buffer measured on hardware 2026-07-13: pixel-plane data must fit 30 KiB (PIXEL_BYTES_MAX = 30720 bytes), which at 64x16 (384 bytes/frame) is exactly 80 frames -- 80 displays, 81 uploads to 100% then shows nothing on the panel. Two structural caps also apply but are looser at this geometry: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535). Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected."
         metaphor: "Weighing the pages before sealing them, refusing a book that will not fit the pouch."
         input_parameters: {
           frame_bundle: { type: "FrameBundle", description: "RGB888 frames at panel geometry.", required: true },
@@ -185,14 +185,18 @@ Module("CoolLEDXProtocol") {
         }
         implementation: |
           def preflight_frame_bundle(frame_bundle, width, height):
-              plane_bytes = 3 * width * (height // 8)
+              plane_bytes = 3 * width * (height // 8)          # 384 at 64x16
               n = len(frame_bundle.frames)
-              max_by_count = 255                          # frame_count is one byte
-              max_by_len = (65535 - 27) // plane_bytes    # 16-bit total-length field
-              max_frames = min(max_by_count, max_by_len)  # 170 at 64x16
+              PIXEL_BYTES_MAX = 30 * 1024                      # measured device frame buffer, 2026-07-13
+              max_by_buffer = PIXEL_BYTES_MAX // plane_bytes   # 80 at 64x16 -- BINDING cap
+              max_by_count = 255                               # frame_count is one byte
+              max_by_len = (65535 - 27) // plane_bytes         # 16-bit total-length field
+              max_frames = min(max_by_buffer, max_by_count, max_by_len)
               payload = (24 + 2 + plane_bytes) if n == 1 else (27 + plane_bytes * n)
-              if n > max_frames:
-                  raise CodecError(f'{n} frames exceeds ceiling {max_frames} for {width}x{height}')
+              if n * plane_bytes > PIXEL_BYTES_MAX:
+                  raise CodecError(f'{n} frames = {n*plane_bytes} B of pixel data over the {PIXEL_BYTES_MAX//1024} KiB frame buffer ({max_by_buffer} max at {width}x{height})')
+              if n > max_by_count:
+                  raise CodecError(f'{n} frames exceeds the one-byte frame_count limit')
               if payload > 65535:
                   raise CodecError(f'payload {payload} exceeds the 16-bit total-length field')
               return True, max_frames, payload, collapse_to_single_speed(frame_bundle)
@@ -275,12 +279,12 @@ Module("CoolLEDXProtocol") {
           "Every wire packet is 0x01 || escape(len_be16 || payload) || 0x03.",
           "Reserved bytes 0x01/0x02/0x03 in payloads are always byte-stuffed via the 0x02 escape.",
           "Frame transfers are chunked at 128 data bytes with an XOR checksum per chunk.",
-          "Animation payloads are preflighted: frame_count is a single byte (<=255) and the 16-bit total-length field caps the raw payload at 65535 bytes (~170 frames at 64x16); over-budget bundles are rejected, never truncated.",
+          "Animation payloads are preflighted against the measured 30 KiB device frame buffer (binding cap: 80 frames at 64x16) plus the structural caps (frame_count <= 255; 16-bit total-length <= 65535 bytes); over-budget bundles are rejected, never truncated.",
           "The device carries one global animation speed; per-frame timing is resampled upstream (PixelFramePipeline) and collapsed to a single speed here, or rejected.",
           "Input frames must already be quantized to the panel palette; packing is 1 bit per channel (8 wire color states) and does not itself dither.",
           "Frame-transfer EncodedPayloads carry flow_control.await_ack=true; control payloads carry an empty flow_control.",
           "This module never performs BLE writes; delivery and the ack handshake belong to GuardedTransport.",
-          "Byte-for-byte encoding of brightness (0x08) and image (0x03) is verified against real hardware; animation (0x04) remains experimental until hardware-confirmed."
+          "Byte-for-byte encoding of brightness (0x08), image (0x03), and animation (0x04) is verified against real hardware -- 0x04 confirmed 2026-07-13: an 80-frame 64x16 clip displayed while 81 frames uploaded but did not, pinning the 30 KiB frame buffer."
         ]
         tags: ["orchestrator", "verified-hardware"]
       }
@@ -301,10 +305,13 @@ Module("CoolLEDXProtocol") {
     verified_on_hardware: |
       - Brightness (0x08) visibly changed the panel.
       - 4-chunk 64x16 image (0x03) acked success per chunk and rendered.
+      - Animation (0x04) displayed on hardware 2026-07-13: an 80-frame 64x16 clip
+        rendered; 81 frames uploaded to 100% but showed nothing, pinning the device
+        frame buffer at 30 KiB (30720 B of pixel data). Now enforced in preflight
+        (PIXEL_BYTES_MAX) and used as the gif max-frames default.
     open_work: |
-      - Confirm animation opcode (0x04) multi-frame timing on hardware.
       - Confirm power/switch (0x09) vs power_on (0x13)/power_down (0x12) semantics.
-      - Decode and assert on the ack status byte (0x00 success vs 0x06 checksum error) instead of treating any notification as success.
+      - Decode and assert on the ack status byte (0x00 success vs 0x06 checksum error) instead of treating any notification as success (host currently surfaces distinct notifications but does not yet decode NAK).
       - Explore 7-color vs full-RGB packing beyond the 1-bit threshold.
   }
 }

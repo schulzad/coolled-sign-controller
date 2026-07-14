@@ -62,7 +62,7 @@ Module("SignControlService") {
           source: { type: "AnimatedSource|string", description: "GIF/APNG path, bytes, or base64.", required: true },
           dither_mode: { type: "string", description: "ordered | none | error_diffusion.", required: false, default: "ordered" },
           timeline_policy: { type: "string", description: "resample | strict.", required: false, default: "resample" },
-          max_frames: { type: "int", description: "Input bound; also clamped to the codec budget.", required: false, default: 170 },
+          max_frames: { type: "int", description: "Input bound before decode (DoS guard); the codec then clamps to its measured 30 KiB frame buffer -- 80 at 64x16 -- by subsampling.", required: false, default: 170 },
           execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
         }
         actions: { guard: "bound_media_input", render: "render_bundle", play: "play_bundle" }
@@ -181,7 +181,7 @@ Module("SignControlService") {
         metaphor: "Weighing the parcel at the door before it is ever unwrapped."
         input_parameters: {
           source: { type: "AnimatedSource|string", description: "Animated asset.", required: true },
-          max_frames: { type: "int", description: "Frame ceiling.", required: false, default: 170 },
+          max_frames: { type: "int", description: "Decode DoS guard (max frames accepted before the codec subsamples/clamps to its 30 KiB / 80-frame budget).", required: false, default: 170 },
           max_bytes: { type: "int", description: "Byte ceiling.", required: false, default: 2000000 }
         }
         output_format: { ok: "bool True when within bounds." }

@@ -35,7 +35,7 @@
       "file": "CoolLEDXProtocol.smdl",
       "layer": "protocol/codec",
       "source": "src/opensign/protocol/codecs/coolledx.py",
-      "status": "hardware-verified (brightness 0x08, image 0x03); animation 0x04 experimental",
+      "status": "hardware-verified (brightness 0x08, image 0x03, animation 0x04 -- 0x04 confirmed 2026-07-13, 30 KiB / 80-frame buffer)",
       "delegates_to": ["GuardedTransport"],
       "summary": "Wire framing, control opcodes, bitplane packing, 128-byte checksummed chunks, animation preflight (frame/payload budget + single global speed), an ack decoder, and the await-ack flow_control hint. Owns encoding, not writes."
     },
@@ -53,7 +53,7 @@
       "file": "PixelFramePipeline.smdl",
       "layer": "animation",
       "source": "src/opensign/animation (studio/preview)",
-      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile new/unverified",
+      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (80-frame 64x16 GIF displayed)",
       "delegates_to": ["DeviceProfileLedger"],
       "summary": "Scene or animated source -> RGB888 -> fit/orient -> timeline resample -> palette quantize -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
     },
@@ -97,7 +97,7 @@
       "id": "W4",
       "title": "Animation + scheduling",
       "modules": ["CoolLEDXProtocol", "PixelFramePipeline", "SignControlService"],
-      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are now specified; remaining: implement create_animation_bundle, confirm 0x04 multi-frame timing on hardware, and drive scheduler playlists."
+      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are specified and, as of 2026-07-13, animation displays on hardware (0x04) with the 30 KiB / 80-frame buffer enforced and dither=none paired with NEAREST; remaining: implement create_animation_bundle, confirm multi-frame cadence/timing, and drive scheduler playlists."
     },
     {
       "id": "W5",
@@ -113,6 +113,6 @@
     "Rendering is transport-neutral; only the device codec knows the wire format; only the transport touches the radio.",
     "PixelFramePipeline compiles bundles only; SignControlService is the sole cross-module orchestrator (compile -> encode -> deliver).",
     "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device colour knowledge never leaks into compilation.",
-    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted (frame_count <= 255; 16-bit payload cap, ~170 frames at 64x16) and rejected rather than truncated."
+    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device frame buffer (80 frames at 64x16) plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated."
   ]
 }
