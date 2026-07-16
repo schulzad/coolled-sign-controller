@@ -19,23 +19,31 @@ A “verified” command should identify the physical panel, application version
 
 ## Device identity
 
+The checked-in starter (`device_profile.json`) begins with everything unverified.
+The values below are for the characterized reference panel (recorded in
+`device_profile.local.json`).
+
 | Field | Current value | State | Evidence |
 |---|---|---|---|
 | Panel ID | `desk-sign` | local label | User-provided scaffold name |
-| Physical dimensions | 48x12 | unverified | SeedScript acceptance target |
-| Advertised name | unknown | unverified | Scan required |
-| BLE identifier | unknown | unverified | Scan required |
+| Physical dimensions | 64x16 | verified | Advertisement manufacturer data (2026-07-13); corrects the earlier 48x12 target |
+| Colour mode | 7-colour (mode 1) | verified | Manufacturer-data colour byte |
+| Advertised name | `CoolLEDX` (suffix DF7D) | verified | Scan after power-cycle (name broadcast only briefly at power-on) |
+| BLE identifier | MAC `ff:00:00:06:6f:82` (platform id `2810750F-…` on macOS) | verified | Scan + manufacturer data |
+| Firmware | 6 | verified | Manufacturer-data firmware byte |
 | PCB revision | unknown | unverified | Board photographs required |
 | MCU / BLE radio | unknown | unverified | Direct marking or strong hardware evidence required |
 
 ## GATT map
 
-Populate this table from `opensign-scan inspect` output. Do not infer purpose from UUID shape alone.
+Populated from `opensign-scan inspect`. The panel exposes a single vendor service
+(`FFF0`) with one characteristic (`FFF1`) used for **both** writes and
+notifications; do not infer purpose from UUID shape alone.
 
 | Service UUID | Characteristic UUID | Properties | Observed traffic | Hypothesized role | State |
 |---|---|---|---|---|---|
-| TBD | TBD | TBD | TBD | write channel | unverified |
-| TBD | TBD | TBD | TBD | notify/ack channel | unverified |
+| `0000fff0-…` | `0000fff1-…` | write-without-response, notify, read (max WWR 244; CCCD `0x2902`) | framed control + frame-transfer writes | write channel | verified |
+| `0000fff0-…` | `0000fff1-…` | notify | per-chunk ack notifications | notify/ack channel | verified (arrival + `0x00` ack decoded); `0x06` NAK path not yet hardware-exercised |
 
 ## Controlled capture matrix
 
@@ -77,8 +85,8 @@ Store a sidecar JSON file next to each capture:
 
 | Capture group | Direction | Characteristic | Constant regions | Variable regions | Candidate interpretation | State |
 |---|---|---|---|---|---|---|
-| TBD | write | TBD | TBD | TBD | command / length / payload / checksum | unverified |
-| TBD | notify | TBD | TBD | TBD | acknowledgement / status | unverified |
+| brightness / image / animation | write | `FFF1` | `0x01` start, `0x03` end, `0x02` escape | length, opcode, payload | `0x01 \|\| escape(len_be16 \|\| opcode \|\| args) \|\| 0x03`; frame-transfer chunks add an XOR checksum | verified |
+| per-chunk ack | notify | `FFF1` | leading opcode + `0x00` | chunk index, status byte | ack status `0x00` = success, `0x06` = checksum error | decoded in software (`decode_coolledx_ack`); `0x06` NAK re-send not yet hardware-exercised |
 
 ## Profile-driven codec contract
 
@@ -153,14 +161,25 @@ A successful `write_gatt_char` call proves only that the host stack accepted a w
 
 The runtime records host-level success separately from display-level confidence.
 
-## Known unknowns
+## Resolved on the reference panel
 
-- Whether the panel requires pairing, bonding, a session key, or application-level encryption.
-- Whether an upload is streamed directly, stored as an asset, or cached by hash.
-- Whether frame timing is encoded per frame, globally, or controlled by a separate speed command.
+- No pairing, bonding, or session key is required for the observed commands; framing
+  uses `0x02` byte-stuffing with no application-level encryption (`encryption.mode = none`).
+- Uploads are store-and-loop, not streamed; there is no real-time frame-streaming
+  mechanism (`frame_streaming` is rejected). Hash/asset caching is not implemented.
+- Animation timing is a single global speed (per-frame hold time in ms, smaller =
+  faster); native text-scroll rate is a separate `SPEED` command (`0x07`, higher =
+  faster — opposite polarity).
+- Pixel order is column-major, 1 bit per R/G/B plane, MSB = top pixel.
+
+## Still unknown
+
 - Whether brightness and power settings are volatile or persistent.
 - Whether multiple hardware revisions share the same advertised name.
-- Whether the controller uses row-major, column-major, serpentine, tiled, or transformed pixel order.
+- Whether the `0x06` checksum-error NAK actually fires on this panel. The decoder
+  (`decode_coolledx_ack`) and per-packet re-send are wired into the transport, but
+  only `0x00` (success) acks have been seen so far, so the NAK/re-send path is
+  unexercised on hardware.
 
 ## Change discipline
 

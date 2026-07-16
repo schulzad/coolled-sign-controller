@@ -25,7 +25,7 @@ The design rule is **evidence before claims**: the toolkit ships with *no* hardc
 - **Read-only discovery** — scan advertisements (catching the name a CoolLEDX only broadcasts for a few seconds after power-on), decode geometry/colour mode from the manufacturer data, and enumerate GATT without ever writing.
 - **Evidence-backed profiles** — a device profile is a museum accession card: claims advance only with cited evidence, and a codec refuses to encode a command until it is at least `experimental`.
 - **Transport-neutral rendering** — text, static images, GIFs, and temporal-colour stills compile to a hashed RGB888 frame bundle that knows nothing about Bluetooth.
-- **A hardware-tested CoolLEDX codec** — framing, byte-stuffing, column-major bitplane packing, 128-byte checksummed chunks, and control opcodes; plus the device's **native firmware text scroll** (proven on hardware, codec integration in progress).
+- **A hardware-tested CoolLEDX codec** — framing, byte-stuffing, column-major bitplane packing, 128-byte checksummed chunks, and control opcodes; plus the device's **native firmware text scroll** (hardware-verified and wired into `coolled text` by default).
 - **Guarded BLE delivery** — device-agnostic chunked writes with a race-safe per-chunk ack handshake; a byte-exact dry-run plan when you don't want to touch the radio.
 - **Temporal colour (FRC)** — fake in-between colours on a 1-bit panel by flickering a still faster than the eye's fusion ceiling (~62 Hz, measured on the reference panel).
 - **One friendly CLI + a localhost API** — `coolled text "HELLO"` just works; the FastAPI surface exposes `/text`, `/image`, `/animation`, `/brightness`, `/power`, and `/status`.
@@ -181,12 +181,15 @@ Useful flags on the render/send commands: `--dry-run`, `--preview PATH`, `--bund
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/status` | Per-panel state, scheduled jobs, and optional diagnostics |
-| `POST` | `/text` | Render + play text (static or scrolling) |
-| `POST` | `/image` | Fit + play an image (static, or a temporal-colour loop) |
-| `POST` | `/animation` | Compile + play a bounded GIF/APNG |
-| `POST` | `/scene` | Play a scene description |
+| `POST` | `/text` | Render + play text (static, or a host-side scroll flipbook) |
+| `POST` | `/image` | Fit + play an image (static, or a temporal-colour FRC loop via `temporal`) |
+| `POST` | `/animation` | Compile + play a bounded base64 GIF/APNG (subsampled to the frame buffer) |
+| `POST` | `/bundle` | Play a pre-rendered frame-bundle JSON |
+| `POST` | `/scene` | Alias for `/bundle` |
 | `POST` | `/brightness` | Set brightness (0–100%) |
 | `POST` | `/power` | Turn the panel on/off |
+
+> `/animation` and `/image` (`temporal`) compile server-side. The device-native firmware text scroll is still **CLI-only** (`coolled text`); the API's `/text` uses the host-side scroll flipbook — see [Still open](#still-open).
 
 ---
 
@@ -208,7 +211,7 @@ Reference panel: **CoolLEDX, 64×16, 7-colour, firmware 6** (BLE MAC `ff:00:00:0
 
 ### Still open
 
-- Decode the notify **ack status** byte (`0x00` success vs `0x06` checksum error) and wire NAK re-send (arrival is verified; the status decode is not yet wired in).
+- **Exercise NAK re-send on hardware.** The notify **ack status** byte (`0x00` success vs `0x06` checksum error) is now decoded and a checksum-error NAK re-sends the packet (`naks`/`nak_retries` in the transfer telemetry), but the `0x06` path has not yet been provoked on a real panel — only `0x00` acks are confirmed.
 - Route SDK/API `play_text(scroll=true)` through native scroll (CLI already does).
 - Asset/hash cache to skip re-transferring a frame bundle the panel already holds; multi-panel fan-out; API auth/rate-limiting.
 

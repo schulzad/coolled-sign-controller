@@ -31,6 +31,10 @@ class EncodedPayload:
     # {"await_ack": True, "ack_timeout": 2.0, "scope": "per_packet"}.
     # Empty means "fire packets without waiting" (the default for control).
     flow_control: dict[str, Any] = field(default_factory=dict)
+    # Optional codec-supplied ack decoder (bytes -> {index, status, is_success,
+    # is_nak}). Kept off ``to_dict`` because it is a callable; the transport uses
+    # it to tell a per-chunk success from a checksum-error NAK and re-send.
+    ack_decoder: Callable[[bytes], dict[str, Any]] | None = None
 
     def to_dict(self, include_packet_hex: bool = True) -> dict[str, Any]:
         data = {
