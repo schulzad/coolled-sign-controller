@@ -309,3 +309,93 @@ def test_transport_control_does_not_wait_for_ack() -> None:
     assert result.success is True
     assert result.awaited_ack is False
     assert result.ack_timeouts == 0
+
+
+def _ack_note(status: int, index: int = 0) -> dict:
+    """A CoolLEDX-shaped ack notification: cmd 00 <index_be16> <status>."""
+    data = bytes([0x03, 0x00]) + index.to_bytes(2, "big") + bytes([status])
+    return {"hex": data.hex(), "length": len(data)}
+
+
+class _StatusClient:
+    """Fake client that acks each write with a scripted status byte.
+
+    ``statuses`` is consumed one per write; the final value repeats once the list
+    is exhausted, so ``[0x06]`` NAKs forever and ``[0x06, 0x00]`` NAKs once.
+    """
+
+    def __init__(self, transport: BleakTransport, statuses: list[int]) -> None:
+        self._transport = transport
+        self._statuses = list(statuses)
+        self.is_connected = True
+        self.mtu_size = 247
+        self.writes: list[bytes] = []
+
+    async def write_gatt_char(self, _char, data, *, response: bool = False) -> None:
+        self.writes.append(bytes(data))
+        status = self._statuses[min(len(self.writes) - 1, len(self._statuses) - 1)]
+        self._transport.notifications.append(_ack_note(status))
+        self._transport._notify_event.set()
+
+
+def test_decode_coolledx_ack_status_bytes() -> None:
+    from opensign.protocol.codecs.coolledx import decode_coolledx_ack
+
+    assert decode_coolledx_ack(bytes.fromhex("0300000000"))["is_success"] is True
+    nak = decode_coolledx_ack(bytes.fromhex("0300000006"))
+    assert nak["is_nak"] is True and nak["is_success"] is False
+    assert decode_coolledx_ack(b"")["status"] is None
+
+
+def test_transport_resends_packet_on_nak_then_succeeds() -> None:
+    from opensign.protocol.codecs.coolledx import decode_coolledx_ack
+
+    transport = _prime_transport(coolledx_profile(), ack=False)
+    transport.client = _StatusClient(transport, [0x06, 0x00])  # NAK once, then success
+    result = asyncio.run(
+        transport.send_packets(
+            [b"\x01\x00\x01aa\x03"],
+            await_ack=True,
+            ack_timeout=0.5,
+            ack_decoder=decode_coolledx_ack,
+            nak_retry_limit=2,
+        )
+    )
+    assert result.success is True
+    assert result.nak_retries == 1
+    assert result.acks_received == 1
+    assert result.naks == 0
+    assert len(transport.client.writes) == 2  # original + one re-send
+
+
+def test_transport_nak_exhausts_retries_but_host_write_succeeds() -> None:
+    from opensign.protocol.codecs.coolledx import decode_coolledx_ack
+
+    transport = _prime_transport(coolledx_profile(), ack=False)
+    transport.client = _StatusClient(transport, [0x06])  # always NAK
+    result = asyncio.run(
+        transport.send_packets(
+            [b"\x01\x00\x01aa\x03"],
+            await_ack=True,
+            ack_timeout=0.5,
+            ack_decoder=decode_coolledx_ack,
+            nak_retry_limit=2,
+        )
+    )
+    assert result.naks == 1
+    assert result.nak_retries == 2
+    assert result.acks_received == 0
+    # Host wrote every byte; a NAK is a device signal, not a host-write failure.
+    assert result.success is True
+    assert len(transport.client.writes) == 3  # original + two re-sends
+
+
+def test_transport_without_decoder_counts_bare_notification_as_ack() -> None:
+    # Backward-compatible path: no codec decoder -> any notification is an ack.
+    transport = _prime_transport(coolledx_profile(), ack=True)
+    result = asyncio.run(
+        transport.send_packets([b"\x01\x00\x01aa\x03"], await_ack=True, ack_timeout=0.5)
+    )
+    assert result.acks_received == 1
+    assert result.naks == 0
+    assert result.nak_retries == 0

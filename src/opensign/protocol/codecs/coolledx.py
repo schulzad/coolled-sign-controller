@@ -55,6 +55,12 @@ PIXELS_PER_BYTE = 8
 CHUNK_DATA_SIZE = 128
 DEFAULT_ANIMATION_SPEED = 512
 
+# Per-chunk ack status byte on the FFF1 notify channel. 0x00 = the chunk was
+# accepted (observed on hardware 2026-07-13: "03 00 00 0N 00"); 0x06 = checksum
+# error / NAK per the reference driver (not yet exercised on hardware).
+ACK_STATUS_OK = 0x00
+ACK_STATUS_NAK = 0x06
+
 # Hard protocol ceilings (see framing above): the animation header stores the
 # frame count in a single byte and each chunk header stores the full payload
 # length in two bytes. Exceeding either yields a friendly error instead of a raw
@@ -92,6 +98,28 @@ def map_user_scroll_speed(level: int | float) -> int:
             f"scroll speed must be {USER_SCROLL_SPEED_MIN}..{USER_SCROLL_SPEED_MAX}, got {level}"
         )
     return max(0, min(255, round(float(level) * 255 / USER_SCROLL_SPEED_MAX)))
+
+
+def decode_coolledx_ack(notification: bytes) -> dict[str, Any]:
+    """Decode a CoolLEDX per-chunk ack from the FFF1 notify channel.
+
+    Layout observed on hardware (2026-07-13): ``cmd 00 <index_be16> <status>`` with
+    a trailing status byte -- ``0x00`` success, ``0x06`` checksum error / NAK (the
+    NAK value is from the reference driver and not yet exercised on hardware). A
+    too-short/empty notification decodes to an unknown status so the transport
+    treats it as arrived-but-unverified rather than a NAK.
+    """
+    data = bytes(notification)
+    if not data:
+        return {"index": None, "status": None, "is_success": False, "is_nak": False}
+    status = data[-1]
+    index = int.from_bytes(data[2:4], "big") if len(data) >= 4 else None
+    return {
+        "index": index,
+        "status": status,
+        "is_success": status == ACK_STATUS_OK,
+        "is_nak": status == ACK_STATUS_NAK,
+    }
 
 
 def escape_stream(data: bytes) -> bytes:
@@ -310,6 +338,7 @@ class CoolLEDXCodec:
                 "ack_timeout": self._ack_timeout(),
                 "scope": "per_packet",
             },
+            ack_decoder=decode_coolledx_ack,
             metadata={
                 "status": self.protocol.get("status"),
                 "opcode": OPCODE_TEXT,
@@ -396,6 +425,7 @@ class CoolLEDXCodec:
                 "ack_timeout": self._ack_timeout(),
                 "scope": "per_packet",
             },
+            ack_decoder=decode_coolledx_ack,
             metadata={
                 "status": self.protocol.get("status"),
                 "opcode": command,

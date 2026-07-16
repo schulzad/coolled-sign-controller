@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Wired per-chunk **ack decoding + NAK re-send** into `GuardedTransport`: the CoolLEDX codec now supplies an ack decoder (`decode_coolledx_ack`; status `0x00` success / `0x06` checksum error), `send_packets` is per-packet and re-sends a NAKed packet up to `nak_retry_limit`, and `TransferResult` gains `naks` / `nak_retries`. Backward compatible: with no decoder any notification still counts as an ack. The `0x06` path is not yet exercised on hardware.
+- Brought the HTTP API up to the SignControlService spec: `/animation` now compiles a bounded base64 GIF/APNG server-side (subsampled to the device frame buffer), `/image` accepts `temporal` (FRC loop) plus `dither`/levels, and a dedicated `/bundle` route (with `/scene` alias) plays a pre-rendered frame bundle. Added `OpenSignRuntime.play_animation_base64` and extended `play_image_base64`.
+- Refreshed the docs (`README`, `protocol.md`, `docs/module-map.md`, `VALIDATION.md`, `ROADMAP.md`) to match the implemented behaviour and the verified reference panel (64x16).
 - Flipped the send activation trigger: the `coolled` and `opensign-send` CLIs and `scripts/flicker_probe.py` now write to the panel by default and take `--dry-run` to build a plan without BLE writes (replaces the old opt-in `--execute`). The `opensign-api` server is unchanged and stays render-only until started with `--execute`.
 - Transmitting via `ProtocolRuntime` no longer requires a `verified` profile; `experimental` profiles may be written live (a controlled live test is how evidence is promoted), matching the `live_*` scripts.
 - Added `scripts/native_scroll_experiment.py` to test the device's native text scroll (wide bitmap under the TEXT opcode + MODE/SPEED) instead of a rasterized flipbook.

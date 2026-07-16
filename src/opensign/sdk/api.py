@@ -26,6 +26,21 @@ class ImageRequest(BaseModel):
     fit_mode: str = Field(default="contain", pattern="^(contain|cover|stretch)$")
     background: str = "black"
     duration_ms: int = Field(default=1000, ge=1, le=600000)
+    dither: str = Field(default="none", pattern="^(none|ordered|floyd)$")
+    temporal: int = Field(default=0, ge=0, le=32)
+    auto_levels: bool = False
+    black_level: int = Field(default=0, ge=0, le=254)
+    white_level: int = Field(default=255, ge=1, le=255)
+
+
+class AnimationRequest(BaseModel):
+    panel_id: str = "desk-sign"
+    source_base64: str = Field(min_length=1)
+    fps: float | None = Field(default=None, gt=0, le=60)
+    max_frames: int | None = Field(default=None, ge=1, le=255)
+    fit_mode: str = Field(default="contain", pattern="^(contain|cover|stretch)$")
+    background: str = "black"
+    dither: str = Field(default="ordered", pattern="^(none|ordered|floyd)$")
 
 
 class BrightnessRequest(BaseModel):
@@ -70,7 +85,15 @@ def create_app(
             "service": "OpenSign local API",
             "version": "0.1.0",
             "execute_enabled": runtime.execute,
-            "routes": ["/text", "/image", "/animation", "/brightness", "/power", "/status"],
+            "routes": [
+                "/text",
+                "/image",
+                "/animation",
+                "/bundle",
+                "/brightness",
+                "/power",
+                "/status",
+            ],
         }
 
     @app.get("/status")
@@ -106,16 +129,36 @@ def create_app(
                 fit_mode=request.fit_mode,
                 background=request.background,
                 duration_ms=request.duration_ms,
+                dither=request.dither,
+                temporal=request.temporal,
+                auto_levels=request.auto_levels,
+                black_level=request.black_level,
+                white_level=request.white_level,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/animation")
-    @app.post("/scene")
-    async def animation(request: BundleRequest) -> dict[str, Any]:
+    async def animation(request: AnimationRequest) -> dict[str, Any]:
         try:
-            bundle = FrameBundle.from_json_dict(request.frame_bundle)
-            return await runtime.play_bundle(request.panel_id, bundle)
+            return await runtime.play_animation_base64(
+                request.panel_id,
+                request.source_base64,
+                fps=request.fps,
+                max_frames=request.max_frames,
+                fit_mode=request.fit_mode,
+                background=request.background,
+                dither=request.dither,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/bundle")
+    @app.post("/scene")
+    async def bundle(request: BundleRequest) -> dict[str, Any]:
+        try:
+            frame_bundle = FrameBundle.from_json_dict(request.frame_bundle)
+            return await runtime.play_bundle(request.panel_id, frame_bundle)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
