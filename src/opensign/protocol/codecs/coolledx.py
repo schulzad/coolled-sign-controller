@@ -61,6 +61,14 @@ DEFAULT_ANIMATION_SPEED = 512
 # error / NAK per the reference driver (not yet exercised on hardware).
 ACK_STATUS_OK = 0x00
 ACK_STATUS_NAK = 0x06
+ACK_ERROR_NAMES = {
+    0x01: "transmission_failed",
+    0x02: "device_abnormality",
+    0x03: "data_error",
+    0x04: "data_length_error",
+    0x05: "data_id_error",
+    0x06: "data_checksum_error",
+}
 
 # Hard protocol ceilings (see framing above): the animation header stores the
 # frame count in a single byte and each chunk header stores the full payload
@@ -69,12 +77,14 @@ ACK_STATUS_NAK = 0x06
 FRAME_COUNT_MAX = 0xFF
 PAYLOAD_BYTES_MAX = 0xFFFF
 
-# Device frame buffer, measured on hardware 2026-07-13: the panel accepts and
-# ACKs larger uploads but only *displays* animations whose pixel data fits ~30
-# KiB. At 64x16 (384 B/frame) that is exactly 80 frames -- 80 displays, 81
-# uploads to 100% then shows nothing. This is far below PAYLOAD_BYTES_MAX, so it
-# is the real cap on animation length.
-PIXEL_BYTES_MAX = 30 * 1024  # 30720
+# Device animation limit measured on hardware 2026-08-15: the full payload,
+# including its 27-byte header, must fit 30 KiB. An 80-frame 64x16 payload
+# (30,747 B) is rejected immediately with DATA_LENGTH_ERROR; 79 frames
+# (30,363 B) receive 238/238 success ACKs. Reserve the header before deriving
+# the pixel/frame budget.
+ANIMATION_HEADER_BYTES = 27
+ANIMATION_PAYLOAD_BYTES_MAX = 30 * 1024
+PIXEL_BYTES_MAX = ANIMATION_PAYLOAD_BYTES_MAX - ANIMATION_HEADER_BYTES
 
 # Native text-scroll MODE args (CoolLEDX Mode enum).
 MODE_STATIC = 1
@@ -101,25 +111,72 @@ def map_user_scroll_speed(level: int | float) -> int:
     return max(0, min(255, round(float(level) * 255 / USER_SCROLL_SPEED_MAX)))
 
 
+def _unframe_notification(notification: bytes) -> bytes | None:
+    """Decode a framed CoolLEDX notification into its command payload."""
+    if len(notification) < 4 or notification[0] != FRAME_START or notification[-1] != FRAME_END:
+        return None
+    decoded = bytearray()
+    index = 1
+    while index < len(notification) - 1:
+        value = notification[index]
+        if value == ESCAPE_PREFIX:
+            if index + 1 >= len(notification) - 1:
+                return None
+            escaped = notification[index + 1]
+            if escaped not in {0x05, 0x06, 0x07}:
+                return None
+            decoded.append(escaped - ESCAPE_OFFSET)
+            index += 2
+        else:
+            decoded.append(value)
+            index += 1
+    if len(decoded) < 2:
+        return None
+    payload_length = int.from_bytes(decoded[:2], "big")
+    payload = bytes(decoded[2:])
+    return payload if len(payload) == payload_length else None
+
+
 def decode_coolledx_ack(notification: bytes) -> dict[str, Any]:
     """Decode a CoolLEDX per-chunk ack from the FFF1 notify channel.
 
-    Layout observed on hardware (2026-07-13): ``cmd 00 <index_be16> <status>`` with
-    a trailing status byte -- ``0x00`` success, ``0x06`` checksum error / NAK (the
-    NAK value is from the reference driver and not yet exercised on hardware). A
-    too-short/empty notification decodes to an unknown status so the transport
-    treats it as arrived-but-unverified rather than a NAK.
+    Hardware notifications use the same outer framing and byte escaping as
+    commands. After unframing, the payload is ``cmd 00 <index_be16> <status>``.
+    ``0x00`` is success, ``0x06`` is a retryable checksum NAK, and the other
+    nonzero values are fatal command errors from the reference driver's
+    ``ErrorCode`` enum. Bare payloads remain accepted for captured fixtures.
     """
     data = bytes(notification)
     if not data:
-        return {"index": None, "status": None, "is_success": False, "is_nak": False}
+        return {
+            "index": None,
+            "status": None,
+            "status_name": None,
+            "is_success": False,
+            "is_nak": False,
+            "is_fatal": False,
+        }
+    if data[0] == FRAME_START:
+        unframed = _unframe_notification(data)
+        if unframed is None:
+            return {
+                "index": None,
+                "status": None,
+                "status_name": "malformed_notification",
+                "is_success": False,
+                "is_nak": False,
+                "is_fatal": True,
+            }
+        data = unframed
     status = data[-1]
     index = int.from_bytes(data[2:4], "big") if len(data) >= 4 else None
     return {
         "index": index,
         "status": status,
+        "status_name": ACK_ERROR_NAMES.get(status, "success" if status == ACK_STATUS_OK else "unknown"),
         "is_success": status == ACK_STATUS_OK,
         "is_nak": status == ACK_STATUS_NAK,
+        "is_fatal": status not in {ACK_STATUS_OK, ACK_STATUS_NAK},
     }
 
 
@@ -365,16 +422,17 @@ class CoolLEDXCodec:
         per_frame = max(1, self.width * self.height * 3 // PIXELS_PER_BYTE)
         budget_frames = PIXEL_BYTES_MAX // per_frame
 
-        # Device frame buffer (measured 2026-07-13): a larger animation still
-        # transfers and ACKs cleanly but the panel displays nothing, so reject it
-        # up front instead of letting the user watch a silent no-op.
+        # The firmware's 30 KiB limit applies to the complete animation payload,
+        # so reserve its 27-byte header before deriving the frame budget.
         if frame_count * per_frame > PIXEL_BYTES_MAX:
             raise CodecError(
                 f"Animation is {frame_count} frames x {per_frame} B = "
-                f"{frame_count * per_frame} B of pixel data, over the panel's "
-                f"{PIXEL_BYTES_MAX // 1024} KiB frame buffer (measured 2026-07-13). "
+                f"{frame_count * per_frame} B of pixel data plus a "
+                f"{ANIMATION_HEADER_BYTES} B header, over the panel's "
+                f"{ANIMATION_PAYLOAD_BYTES_MAX // 1024} KiB animation limit "
+                f"(measured 2026-08-15). "
                 f"At {self.width}x{self.height} the ceiling is {budget_frames} frames; "
-                f"a longer clip uploads to 100% then displays nothing. Lower "
+                f"a longer clip is rejected with DATA_LENGTH_ERROR. Lower "
                 f"max_frames to {budget_frames} or fewer (or raise fps to drop frames)."
             )
         # Structural backstop: the animation header stores frame count in one byte.

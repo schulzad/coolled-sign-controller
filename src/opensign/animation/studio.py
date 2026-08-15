@@ -12,8 +12,10 @@ from .render import (
     apply_levels,
     composite_frame,
     compute_auto_levels,
+    detect_background_color,
     fit_image,
     image_from_base64,
+    knockout_color,
     load_and_fit_image,
     normalize_frames,
     parse_color,
@@ -387,6 +389,8 @@ class PixelAnimationStudio:
         fit_mode: str = "contain",
         background: str = "black",
         dither: str = "ordered",
+        key_color: str | tuple[int, int, int] | None = None,
+        key_tolerance: int = 96,
         loop_mode: str = "loop",
         rotation: int = 0,
         flip_horizontal: bool = False,
@@ -398,6 +402,12 @@ class PixelAnimationStudio:
         Each frame is composited onto ``background`` (so transparent GIFs do not
         turn black), fitted to the panel, and dithered to the panel's 8-colour
         gamut (``dither="ordered"`` by default to avoid temporal shimmer).
+
+        ``key_color`` knocks a background colour out to black before dithering so
+        a bright, full-scene clip does not light the whole 1-bit panel: pass a
+        colour (``"skyblue"``, ``"#87CEEB"``, an RGB tuple) or ``"auto"`` to
+        sample it from the source frame border. ``key_tolerance`` (Euclidean RGB
+        distance, 0..441) widens the match.
 
         Per-frame GIF durations become the bundle's ``frame_durations_ms``. The
         CoolLEDX device plays at a single global speed, so the median hold time is
@@ -440,7 +450,26 @@ class PixelAnimationStudio:
             )
             for frame in frames
         ]
+        metadata: dict[str, Any] = {
+            "pattern": "gif",
+            "source": str(source),
+            "gif_frames": len(fitted),
+            "fit_mode": fit_mode,
+        }
+        if key_color is not None:
+            # Detect on the source frame (pre-fit): a contain letterbox is black,
+            # which would otherwise win the border vote.
+            resolved = (
+                detect_background_color(frames[len(frames) // 2])
+                if isinstance(key_color, str) and key_color == "auto"
+                else parse_color(key_color)
+            )
+            fitted = [knockout_color(frame, resolved, tolerance=key_tolerance) for frame in fitted]
+            metadata["key_color"] = list(resolved)
+            metadata["key_tolerance"] = key_tolerance
+            metadata["key_source"] = "auto" if key_color == "auto" else str(key_color)
         median_ms = sorted(durations)[len(durations) // 2]
+        metadata["coolledx_speed"] = median_ms
         return self.compile_images(
             fitted,
             frame_durations_ms=durations,
@@ -450,11 +479,5 @@ class PixelAnimationStudio:
             flip_horizontal=flip_horizontal,
             flip_vertical=flip_vertical,
             dither=dither,
-            metadata={
-                "pattern": "gif",
-                "source": str(source),
-                "gif_frames": len(fitted),
-                "coolledx_speed": median_ms,
-                "fit_mode": fit_mode,
-            },
+            metadata=metadata,
         )
