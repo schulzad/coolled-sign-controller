@@ -64,7 +64,7 @@ coolled inspect '<address-or-id>' --width 64 --height 16 \
 # Play something (coolled reads device_profile.local.json by default)
 coolled text "HELLO WORLD"                       # firmware-native scroll where available
 coolled image logo.png --auto-levels
-coolled gif clip.gif
+coolled animation clip.webp                      # aliases: anim, gif
 coolled text "HELLO WORLD" --preview hello.gif        # writes the preview; does not send
 
 # Controls
@@ -88,12 +88,12 @@ curl -X POST http://127.0.0.1:8124/text -H 'content-type: application/json' \
 | `preview …` | `opensign-preview` | Render a pattern to a local `.gif`/`.png` (no hardware) |
 | `text "MSG"` | — | Render text (scrolling by default) and send |
 | `image <path>` | — | Fit an image to the panel and send |
-| `gif <path>` | — | Render a GIF at its own frame rate and send |
+| `animation <path>` | `anim`, `gif` | Render an animated GIF, WebP, APNG, or other Pillow-supported image and send |
 | `send <bundle>` | `opensign-send bundle` | Send a prepared frame-bundle JSON |
 | `control …` | `opensign-send control` | Send a control command (`brightness`, `power`, …) |
 | `serve` | `opensign-api` | Run the localhost API |
 
-Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal/--flip-vertical`, `--profile PATH`. Image/GIF `--fit` uses standard object-fit names: `contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts its aspect ratio; the old name `stretch` remains an alias for `fill`. `image` adds colour controls (`--dither`, `--temporal N`, `--auto-levels`, `--black-level`, `--white-level`); `gif` adds `--key-color` / `--key-tolerance` to knock a bright background out to black. Image and GIF bundles are cached by source contents, panel geometry, and rendering options; pass `--no-cache` to rebuild or `--cache-dir PATH` to choose the location. Run `coolled <command> --help` for the full list.
+Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal/--flip-vertical`, `--profile PATH`. Image/animation `--fit` uses standard object-fit names: `contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts its aspect ratio; the old name `stretch` remains an alias for `fill`. `image` adds colour controls (`--dither`, `--temporal N`, `--auto-levels`, `--black-level`, `--white-level`); `animation` adds `--key-color` / `--key-tolerance` to knock a bright background out to black. Image and animation bundles are cached by source contents, panel geometry, and rendering options; pass `--no-cache` to rebuild or `--cache-dir PATH` to choose the location. Run `coolled <command> --help` for the full list.
 
 ### HTTP API
 
