@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import binascii
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
 
 from opensign.contracts import DeviceProfile, FrameBundle
 
@@ -15,9 +16,9 @@ class CodecError(RuntimeError):
 class Codec(Protocol):
     name: str
 
-    def encode_control(self, command: str, value: Any = None) -> "EncodedPayload": ...
+    def encode_control(self, command: str, value: Any = None) -> EncodedPayload: ...
 
-    def encode_frame_bundle(self, frame_bundle: FrameBundle) -> "EncodedPayload": ...
+    def encode_frame_bundle(self, frame_bundle: FrameBundle) -> EncodedPayload: ...
 
 
 @dataclass(slots=True)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from opensign.contracts import DeviceProfile
 
@@ -245,7 +246,7 @@ class BleakTransport:
                 return False
             try:
                 await asyncio.wait_for(self._notify_event.wait(), timeout=remaining)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 return len(self.notifications) > baseline
         return True
 
