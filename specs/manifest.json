@@ -79,7 +79,7 @@
       "id": "W1",
       "title": "Ack semantics: decode NAK and retry",
       "modules": ["CoolLEDXProtocol", "GuardedTransport"],
-      "outcome": "Codec supplies an ack decoder; transport distinguishes success (0x00) from checksum error (0x06) and retries a NAKed chunk instead of treating any notification as success."
+      "outcome": "Implemented and unit-tested: the codec supplies an ack decoder (decode_coolledx_ack) and the transport distinguishes success (0x00) from checksum error (0x06), re-sending a NAKed packet (naks / nak_retries on TransferResult) instead of treating any notification as success. Remaining: exercise the 0x06 NAK path on real hardware (only 0x00 success acks observed so far)."
     },
     {
       "id": "W2",
@@ -97,7 +97,7 @@
       "id": "W4",
       "title": "Animation + scheduling",
       "modules": ["CoolLEDXProtocol", "PixelFramePipeline", "SignControlService"],
-      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are specified and, as of 2026-07-13, animation displays on hardware (0x04) with the 30 KiB / 80-frame buffer enforced and dither=none paired with NEAREST; remaining: implement create_animation_bundle, confirm multi-frame cadence/timing, and drive scheduler playlists."
+      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are implemented (PixelAnimationStudio.create_gif_bundle + OpenSignRuntime.play_animation_base64 + the API /animation route), and as of 2026-07-13 animation displays on hardware (0x04) with the 30 KiB / 80-frame buffer enforced and dither=none paired with NEAREST; remaining: unify the compiler under the create_animation_bundle name, confirm multi-frame cadence/timing on hardware, and drive scheduler playlists."
     },
     {
       "id": "W5",
