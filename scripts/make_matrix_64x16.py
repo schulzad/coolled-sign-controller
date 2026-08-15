@@ -1,7 +1,8 @@
-from pathlib import Path
-from PIL import Image, ImageDraw
-import random
 import math
+import random
+from pathlib import Path
+
+from PIL import Image, ImageDraw
 
 OUT = Path(__file__).resolve().parent.parent / "examples" / "generated" / "anim"
 W, H = 64, 16

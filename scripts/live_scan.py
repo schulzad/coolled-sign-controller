@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import time
 from datetime import UTC, datetime
 
 from bleak import BleakScanner
