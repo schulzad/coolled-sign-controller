@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 
 def _payload_bytes(packet: Mapping[str, Any]) -> bytes:
@@ -37,7 +38,7 @@ def normalize_trace(trace: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 def _common_prefix_length(left: bytes, right: bytes) -> int:
     count = 0
-    for first, second in zip(left, right):
+    for first, second in zip(left, right, strict=False):
         if first != second:
             break
         count += 1

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
+import io
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from PIL import Image
 
 from opensign.animation.preview import save_preview
+from opensign.animation.render import image_from_base64
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import ContractError, DeviceProfile, FrameBundle, utc_now_iso
 from opensign.protocol.codec import CodecError
+from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
 from opensign.protocol.runtime import ProtocolRuntime
 
 from .integrations import IntegrationRegistry
@@ -249,17 +255,87 @@ class OpenSignRuntime:
             request_id=request_id,
         )
 
-    async def play_image_base64(self, panel_id: str, value: str, **options: Any) -> dict[str, Any]:
+    async def play_image_base64(
+        self,
+        panel_id: str,
+        value: str,
+        *,
+        fit_mode: str = "contain",
+        background: str = "black",
+        duration_ms: int = 1000,
+        dither: str = "none",
+        temporal: int = 0,
+        auto_levels: bool = False,
+        black_level: int = 0,
+        white_level: int = 255,
+        execute: bool | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
         state = self._state(panel_id)
         studio = PixelAnimationStudio(state.profile.width, state.profile.height)
-        bundle = studio.create_base64_image_bundle(
-            value,
-            fit_mode=options.pop("fit_mode", "contain"),
-            background=options.pop("background", "black"),
-            duration_ms=options.pop("duration_ms", 1000),
+        image = image_from_base64(value)
+        if temporal and temporal >= 2:
+            bundle = studio.create_temporal_image_bundle(
+                image,
+                subframes=temporal,
+                fit_mode=fit_mode,
+                background=background,
+                auto_levels=auto_levels,
+                black_point=black_level,
+                white_point=white_level,
+                **self._orientation(state),
+            )
+        else:
+            bundle = studio.create_image_bundle(
+                image,
+                fit_mode=fit_mode,
+                background=background,
+                duration_ms=duration_ms,
+                dither=dither,
+                auto_levels=auto_levels,
+                black_point=black_level,
+                white_point=white_level,
+                **self._orientation(state),
+            )
+        return await self.play_bundle(panel_id, bundle, execute=execute, request_id=request_id)
+
+    async def play_animation_base64(
+        self,
+        panel_id: str,
+        value: str,
+        *,
+        fps: float | None = None,
+        max_frames: int | None = None,
+        fit_mode: str = "contain",
+        background: str = "black",
+        dither: str = "ordered",
+        execute: bool | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Decode a base64 GIF/APNG, compile it to a bounded bundle, and play it.
+
+        The frame count is clamped to the device frame-buffer budget (evenly
+        subsampled, holds folded) so a long clip cannot blow the codec limit.
+        """
+        state = self._state(panel_id)
+        studio = PixelAnimationStudio(state.profile.width, state.profile.height)
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"animation source is not valid base64: {exc}") from exc
+        per_frame = max(1, state.profile.width * state.profile.height * 3 // 8)
+        budget = max(1, PIXEL_BYTES_MAX // per_frame)
+        limit = budget if max_frames is None else max_frames
+        bundle = studio.create_gif_bundle(
+            io.BytesIO(raw),
+            fps=fps,
+            max_frames=limit,
+            fit_mode=fit_mode,
+            background=background,
+            dither=dither,
             **self._orientation(state),
         )
-        return await self.play_bundle(panel_id, bundle, **options)
+        return await self.play_bundle(panel_id, bundle, execute=execute, request_id=request_id)
 
     async def set_brightness(
         self,

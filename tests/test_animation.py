@@ -6,6 +6,8 @@ from opensign.animation.preview import save_preview
 from opensign.animation.render import (
     apply_levels,
     compute_auto_levels,
+    detect_background_color,
+    knockout_color,
     reachable_channels,
     render_test_pattern,
     temporal_dither_frames,
@@ -107,6 +109,42 @@ def test_create_gif_bundle_single_frame_source(tmp_path: Path) -> None:
     gif = _write_gif(tmp_path / "one.gif", frames=1, duration=200)
     bundle = PixelAnimationStudio(64, 16).create_gif_bundle(gif)
     assert len(bundle.frames) == 1
+
+
+def test_knockout_color_removes_background_keeps_subject() -> None:
+    image = Image.new("RGB", (8, 8), (135, 206, 235))
+    image.putpixel((4, 4), (255, 0, 0))
+    out = knockout_color(image, (135, 206, 235), tolerance=96)
+    assert out.getpixel((0, 0)) == (0, 0, 0)  # background knocked out
+    assert out.getpixel((4, 4)) == (255, 0, 0)  # far-off subject colour survives
+
+
+def test_detect_background_color_reads_border_not_subject() -> None:
+    image = Image.new("RGB", (16, 16), (135, 206, 235))
+    for x in range(6, 10):
+        for y in range(6, 10):
+            image.putpixel((x, y), (255, 0, 0))  # interior subject, never on the border
+    red, green, blue = detect_background_color(image)
+    assert abs(red - 135) <= 16 and abs(green - 206) <= 16 and abs(blue - 235) <= 16
+
+
+def test_create_gif_bundle_auto_key_darkens_bright_background(tmp_path: Path) -> None:
+    path = tmp_path / "sky.gif"
+    frame = Image.new("RGB", (64, 16), (135, 206, 235))
+    for x in range(28, 36):
+        for y in range(4, 12):
+            frame.putpixel((x, y), (255, 0, 0))
+    frame.save(path, format="GIF")
+    bundle = PixelAnimationStudio(64, 16).create_gif_bundle(
+        path, fit_mode="stretch", dither="none", key_color="auto"
+    )
+    image = bundle.to_images()[0]
+    lit = sum(1 for pixel in image.getdata() if pixel != (0, 0, 0))
+    assert image.getpixel((0, 0)) == (0, 0, 0)  # sky knocked out
+    assert image.getpixel((31, 7))[0] > 127  # subject still lights red
+    assert 0 < lit < 64 * 16  # not a fully-lit board, not an empty one
+    assert bundle.metadata["key_source"] == "auto"
+    assert bundle.metadata["key_color"]  # detected sky recorded in metadata
 
 
 def test_temporal_dither_frames_binarize_channels() -> None:

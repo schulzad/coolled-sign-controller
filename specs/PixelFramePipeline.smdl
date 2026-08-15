@@ -372,7 +372,7 @@ Module("PixelFramePipeline") {
         scripts/flicker_probe.py, and running.png (a dark UI still) was rescued from a
         washed-out glow by levels (apply_levels), now automatable via --auto-levels (2026-07-14).
     open_work: |
-      - Real GIF/APNG decode with disposal + alpha compositing wired into PixelAnimationStudio (create_animation_bundle).
+      - GIF decode with disposal + alpha compositing is shipped as PixelAnimationStudio.create_gif_bundle (Pillow ImageSequence.Iterator + composite_frame, evenly subsampled to the device frame-buffer budget) and driven by both coolled gif and the API /animation route; remaining is unifying it under the design-level create_animation_bundle name and confirming APNG coverage/tests.
       - The scrambled 'Running' turned out to be the IMAGE path on a low-contrast AA badge (not text rendering): red/blue never cross the 1-bit threshold and green straddles it. Addressed 2026-07-14 by --auto-levels (value-histogram stretch) plus a dark-channel warning; the cleaner long-term answer for actual text is the native text path (crisp 1-bit glyphs, no downscale).
       - Temporal colour is implemented (create_temporal_image_bundle) and surfaced in metadata (subframes/loop_hz/levels); remaining: per-channel perceptual matching and a proper perceived-gamut map so a target RGB picks subframe duty per channel.
       - bundle_hash cache to skip re-transfer when the panel already holds an asset.
