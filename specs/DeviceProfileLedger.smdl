@@ -308,7 +308,7 @@ Module("DeviceProfileLedger") {
       - Flicker-fusion ceiling measured ~62 Hz on the reference panel (2026-07-13, scripts/flicker_probe.py), enabling temporal-colour (FRC) rendering.
     open_work: |
       - Append the native_text_scroll live_hardware_test evidence entry and promote the frame_transfer.modes.native_text_scroll claim.
-      - JSON Schema file (schema/device_profile.schema.json) to machine-check profiles in CI -- add hardware.flicker_fusion_hz as a recorded, evidence-cited fact, and native_text_scroll as a frame_transfer mode claim.
+      - schema/device_profile.schema.json exists but is not machine-checked anywhere (validation is the Python DeviceProfile.validate; nothing uses jsonschema, and CI runs pytest only): wire it into CI to validate profiles, and extend it with hardware.flicker_fusion_hz (evidence-cited) and native_text_scroll as a frame_transfer mode claim.
       - A promotion CLI/helper that enforces these transitions instead of hand-editing JSON.
       - Per-channel perceptual calibration so a target RGB maps to per-channel subframe duty (the perceived-gamut map temporal rendering wants).
       - Multi-panel registry semantics (several signs, one ledger).

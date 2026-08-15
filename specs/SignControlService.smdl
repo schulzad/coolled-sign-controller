@@ -400,10 +400,11 @@ Module("SignControlService") {
     verified_on_hardware: |
       - The runtime path (upload_frame_bundle / send_control) drove verified brightness and image playback; the API wraps the same runtime.
     open_work: |
-      - Route scrolling text (scroll=true) through ProtocolRuntime.play_native_text (CLI coolled text already does; SDK/API still on the host flipbook).
+      - Route scrolling text (scroll=true) through ProtocolRuntime.play_native_text (CLI coolled text already does; SDK/API still compile a host-side flipbook).
       - Auth / rate-limiting on the FastAPI surface before any non-local exposure.
       - Animation playlists (queue multiple stored animations) plus per-animation compile diagnostics surfaced in /status and traces.
-      - Surface ack telemetry (acks_received / naks / ack_timeouts / nak_retries) into /status and traces.
+      - Promote ack telemetry (acks_received / naks / ack_timeouts / nak_retries) to a first-class per-panel /status field: it is already visible nested in last_delivery.transfer, but not surfaced alongside display confirmation as its own signal.
+      - Enforce the pre-decode byte bound (bound_media_input max_bytes): /animation currently guards with max_frames + Pillow's bounded frame decode and then subsamples to the device budget, but does not yet reject a source by raw byte size before decode.
       - Multi-panel fan-out (one request to many signs).
   }
 }
