@@ -221,21 +221,20 @@ def test_coolledx_rejects_over_budget_frame_count() -> None:
         codec.encode_frame_bundle(over_budget)
 
 
-def test_coolledx_accepts_animation_filling_the_frame_buffer() -> None:
-    # 80 frames * (64*16*3/8) = 30720 B = exactly the 30 KiB device buffer (works on hardware).
+def test_coolledx_accepts_animation_fitting_the_payload_limit() -> None:
+    # 79 frames = 30,336 B of pixels + 27 B header = 30,363 B; hardware ACKed 238/238.
     codec = select_codec(coolledx_profile(), allow_experimental=False)
-    encoded = codec.encode_frame_bundle(_animation_bundle([80] * 80))
+    encoded = codec.encode_frame_bundle(_animation_bundle([80] * 79))
     assert encoded.metadata["opcode"] == 0x04
-    assert encoded.metadata["frame_count"] == 80
-    assert encoded.metadata["payload_bytes"] == 27 + 80 * 384
+    assert encoded.metadata["frame_count"] == 79
+    assert encoded.metadata["payload_bytes"] == 27 + 79 * 384
 
 
-def test_coolledx_rejects_animation_over_frame_buffer() -> None:
-    # 81 frames = 30.375 KiB: the device uploads it to 100% then displays nothing,
-    # so the codec rejects it up front (measured 2026-07-13).
+def test_coolledx_rejects_animation_over_payload_limit() -> None:
+    # 80 frames = 30,720 B of pixels + 27 B header: hardware returns DATA_LENGTH_ERROR.
     codec = select_codec(coolledx_profile(), allow_experimental=False)
-    with pytest.raises(CodecError, match="frame buffer"):
-        codec.encode_frame_bundle(_animation_bundle([80] * 81))
+    with pytest.raises(CodecError, match="animation limit"):
+        codec.encode_frame_bundle(_animation_bundle([80] * 80))
 
 
 def test_coolledx_gif_frame_timing_round_trips_to_wire_speed() -> None:
@@ -301,6 +300,57 @@ def test_transport_ack_timeout_is_soft() -> None:
     assert result.errors == []
 
 
+def test_transport_degrades_to_delay_pacing_after_sustained_silence() -> None:
+    # A long transfer whose device stops acking must not wait ack_timeout on every
+    # remaining packet (that stall is the "big clip hangs" symptom). After a few
+    # consecutive timeouts it degrades to delay-pacing and still writes every packet.
+    transport = _prime_transport(coolledx_profile(), ack=False)
+    packets = [b"\x01\x00\x01xx\x03"] * 10
+    result = asyncio.run(
+        transport.send_packets(
+            packets,
+            await_ack=True,
+            ack_timeout=0.01,
+            max_consecutive_ack_timeouts=3,
+        )
+    )
+    assert result.success is True  # missing acks stay soft
+    assert result.ack_timeouts == 3  # stopped waiting after 3, did not stall on all 10
+    assert len(transport.client.writes) == 10  # every packet still written
+
+
+class _HangingClient:
+    """Fake client whose writes never return, to exercise the per-write timeout."""
+
+    def __init__(self) -> None:
+        self.is_connected = True
+        self.mtu_size = 247
+        self.writes: list[bytes] = []
+
+    async def write_gatt_char(self, _char, data, *, response: bool = False) -> None:
+        self.writes.append(bytes(data))
+        await asyncio.sleep(3600)
+
+
+def test_transport_write_timeout_does_not_hang() -> None:
+    # A stalled write-without-response queue must fail the transfer, not block forever.
+    transport = BleakTransport(coolledx_profile())
+    transport.client = _HangingClient()
+    transport.write_characteristic_object = object()
+    transport.notify_subscribed = True
+    result = asyncio.run(
+        transport.send_packets(
+            [b"\x01\x00\x01aa\x03"],
+            await_ack=True,
+            ack_timeout=0.05,
+            retry_limit=0,
+            write_timeout=0.05,
+        )
+    )
+    assert result.success is False
+    assert result.errors and "TimeoutError" in result.errors[0]
+
+
 def test_transport_control_does_not_wait_for_ack() -> None:
     transport = _prime_transport(coolledx_profile(), ack=False)
     result = asyncio.run(
@@ -339,11 +389,17 @@ class _StatusClient:
 
 
 def test_decode_coolledx_ack_status_bytes() -> None:
-    from opensign.protocol.codecs.coolledx import decode_coolledx_ack
+    from opensign.protocol.codecs.coolledx import decode_coolledx_ack, frame_payload
 
     assert decode_coolledx_ack(bytes.fromhex("0300000000"))["is_success"] is True
     nak = decode_coolledx_ack(bytes.fromhex("0300000006"))
     assert nak["is_nak"] is True and nak["is_success"] is False
+    framed = decode_coolledx_ack(frame_payload(bytes.fromhex("0400000100")))
+    assert framed["is_success"] is True
+    assert framed["index"] == 1
+    fatal = decode_coolledx_ack(frame_payload(bytes.fromhex("0400000004")))
+    assert fatal["is_fatal"] is True
+    assert fatal["status_name"] == "data_length_error"
     assert decode_coolledx_ack(b"")["status"] is None
 
 
@@ -388,6 +444,25 @@ def test_transport_nak_exhausts_retries_but_host_write_succeeds() -> None:
     # Host wrote every byte; a NAK is a device signal, not a host-write failure.
     assert result.success is True
     assert len(transport.client.writes) == 3  # original + two re-sends
+
+
+def test_transport_stops_on_fatal_device_error() -> None:
+    from opensign.protocol.codecs.coolledx import decode_coolledx_ack
+
+    transport = _prime_transport(coolledx_profile(), ack=False)
+    transport.client = _StatusClient(transport, [0x04])
+    result = asyncio.run(
+        transport.send_packets(
+            [b"\x01\x00\x01aa\x03", b"\x01\x00\x01bb\x03"],
+            await_ack=True,
+            ack_timeout=0.5,
+            ack_decoder=decode_coolledx_ack,
+        )
+    )
+    assert result.success is False
+    assert result.acks_received == 0
+    assert result.errors == ["packet=0: device rejected packet with data_length_error (0x04)"]
+    assert len(transport.client.writes) == 1
 
 
 def test_transport_without_decoder_counts_bare_notification_as_ack() -> None:

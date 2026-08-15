@@ -31,7 +31,13 @@ def _classify_ack(
     error / NAK so an unverified transfer is never mislabelled ack-verified.
     """
     if decoder is None:
-        return {"index": None, "status": None, "is_success": True, "is_nak": False}
+        return {
+            "index": None,
+            "status": None,
+            "is_success": True,
+            "is_nak": False,
+            "is_fatal": False,
+        }
     try:
         data = bytes.fromhex(notification_hex or "")
     except ValueError:
@@ -111,6 +117,8 @@ class DryRunTransport:
         ack_timeout: float = 2.0,
         ack_decoder: Callable[[bytes], dict[str, Any]] | None = None,
         nak_retry_limit: int = 2,
+        write_timeout: float = 5.0,
+        max_consecutive_ack_timeouts: int = 6,
     ) -> TransferResult:
         packet_list = [bytes(packet) for packet in packets]
         chunk_size, source = conservative_chunk_size(self.profile)
@@ -259,6 +267,8 @@ class BleakTransport:
         ack_timeout: float = 2.0,
         ack_decoder: Callable[[bytes], dict[str, Any]] | None = None,
         nak_retry_limit: int = 2,
+        write_timeout: float = 5.0,
+        max_consecutive_ack_timeouts: int = 6,
     ) -> TransferResult:
         if retry_limit < 0:
             raise ValueError("retry_limit cannot be negative")
@@ -293,12 +303,25 @@ class BleakTransport:
             for attempt in range(retry_limit + 1):
                 result.attempts += 1
                 try:
-                    await self.client.write_gatt_char(
-                        self.write_characteristic_object,
-                        chunk.data,
-                        response=response,
+                    # Bound every write: a write-without-response stack whose queue
+                    # has stalled (e.g. macOS CoreBluetooth when the device stops
+                    # draining) otherwise blocks forever on a long transfer.
+                    await asyncio.wait_for(
+                        self.client.write_gatt_char(
+                            self.write_characteristic_object,
+                            chunk.data,
+                            response=response,
+                        ),
+                        timeout=write_timeout,
                     )
                     result.bytes_sent += len(chunk.data)
+                    # Pace every write. On write-without-response transports a long
+                    # burst with no gap overruns the controller's send queue and the
+                    # next write blocks -- the usual reason a big animation hangs
+                    # while a short clip sails through. inter_chunk_delay_ms is that
+                    # gap; it was previously applied only on the unpaced path.
+                    if delay > 0:
+                        await asyncio.sleep(delay / 1000.0)
                     return None
                 except Exception as exc:
                     last_error = exc
@@ -306,6 +329,11 @@ class BleakTransport:
                         await asyncio.sleep(max(delay / 1000.0, 0.01))
             return f"{type(last_error).__name__}:{last_error}"
 
+        # ``pace_acks`` may degrade to plain delay-pacing mid-transfer if the
+        # device goes silent, so we don't wait ``ack_timeout`` on every remaining
+        # packet (which turns a large transfer into a multi-minute stall).
+        paced = pace_acks
+        consecutive_ack_timeouts = 0
         try:
             for packet_index in range(len(packet_list)):
                 packet_chunks = chunks_by_packet.get(packet_index, [])
@@ -321,17 +349,32 @@ class BleakTransport:
                                 f"packet={chunk.packet_index} chunk={chunk.chunk_index}: {error}"
                             )
                             return result
-                    if not pace_acks:
-                        if delay > 0:
-                            await asyncio.sleep(delay / 1000.0)
+                    if not paced:
                         break
                     # Wait for the device's per-packet ack before the next packet so
                     # we don't overrun its receive buffer. A missing ack is a soft
                     # signal (ack_timeouts): every byte was still written.
                     if not await self._await_notification(ack_baseline, ack_timeout):
                         result.ack_timeouts += 1
+                        consecutive_ack_timeouts += 1
+                        # The device has clearly stopped acking; stop waiting on
+                        # every subsequent packet and finish the transfer
+                        # delay-paced. A store-and-loop panel can still latch it, so
+                        # this stays a soft signal rather than an error.
+                        if consecutive_ack_timeouts >= max_consecutive_ack_timeouts:
+                            paced = False
                         break
+                    consecutive_ack_timeouts = 0
                     ack = _classify_ack(self.notifications[-1].get("hex"), ack_decoder)
+                    if ack.get("is_fatal"):
+                        status = ack.get("status")
+                        status_hex = f"0x{status:02x}" if isinstance(status, int) else "unknown"
+                        status_name = ack.get("status_name") or "device_error"
+                        result.errors.append(
+                            f"packet={packet_index}: device rejected packet "
+                            f"with {status_name} ({status_hex})"
+                        )
+                        return result
                     if ack["is_nak"] and attempt < nak_retry_limit:
                         result.nak_retries += 1
                         continue

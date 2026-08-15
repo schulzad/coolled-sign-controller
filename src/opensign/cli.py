@@ -15,13 +15,16 @@ import importlib
 import json
 import sys
 from collections import Counter
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import opensign.protocol  # noqa: F401  (registers bundled device codecs)
+from opensign.animation.cache import RenderBundleCache
 from opensign.animation.preview import save_preview
 from opensign.animation.render import render_wide_text
 from opensign.animation.studio import PixelAnimationStudio
-from opensign.contracts import DeviceProfile
+from opensign.contracts import DeviceProfile, FrameBundle
 from opensign.protocol.codecs.coolledx import (
     MODE_LEFT,
     PIXEL_BYTES_MAX,
@@ -78,10 +81,92 @@ def _add_common_send_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0)
     parser.add_argument("--flip-horizontal", action="store_true")
     parser.add_argument("--flip-vertical", action="store_true")
-    parser.add_argument("--preview", type=Path, help="Also write a scaled preview (.gif/.png).")
+    parser.add_argument(
+        "--preview",
+        type=Path,
+        help="Write a scaled preview (.gif/.png) and skip BLE delivery.",
+    )
     parser.add_argument("--bundle-out", type=Path, help="Also write the frame bundle JSON.")
     parser.add_argument("--retry-limit", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=15.0)
+
+
+def _add_fit_argument(parser: argparse.ArgumentParser) -> None:
+    def fit_mode(value: str) -> str:
+        modes = {
+            "contain": "contain",
+            "cover": "cover",
+            "fill": "stretch",
+            "stretch": "stretch",
+        }
+        try:
+            return modes[value]
+        except KeyError as exc:
+            raise argparse.ArgumentTypeError(
+                "choose contain, cover, or fill (stretch is also accepted as an alias)"
+            ) from exc
+
+    parser.add_argument(
+        "--fit",
+        type=fit_mode,
+        metavar="{contain,cover,fill}",
+        default="contain",
+        help=(
+            "Map the source onto the panel: contain keeps the whole image with padding; "
+            "cover fills by cropping; fill distorts aspect ratio to fill "
+            "(legacy alias: stretch)."
+        ),
+    )
+
+
+def _should_execute(args: argparse.Namespace) -> bool:
+    """Preview and dry-run modes are always hardware-safe."""
+    return not args.dry_run and args.preview is None
+
+
+def _add_render_cache_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Render from scratch instead of reusing a content-and-parameter keyed bundle.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Render cache directory (default: $OPENSIGN_CACHE_DIR or ~/.cache/opensign-coolled/renders).",
+    )
+
+
+def _render_cached(
+    args: argparse.Namespace,
+    *,
+    kind: str,
+    source: Path,
+    parameters: Mapping[str, Any],
+    render: Callable[[], FrameBundle],
+) -> FrameBundle:
+    if args.no_cache:
+        print("render cache: disabled; rendering from source", file=sys.stderr)
+        return render()
+
+    def render_miss() -> FrameBundle:
+        print("render cache: miss; rendering from source", file=sys.stderr)
+        return render()
+
+    cached = RenderBundleCache(args.cache_dir).get_or_create(
+        source,
+        kind=kind,
+        parameters=parameters,
+        render=render_miss,
+    )
+    if cached.hit:
+        print(f"render cache: hit {cached.key[:12]}", file=sys.stderr)
+    elif cached.write_error:
+        print(f"render cache: could not store entry: {cached.write_error}", file=sys.stderr)
+    else:
+        print(f"render cache: stored {cached.key[:12]}", file=sys.stderr)
+    return cached.bundle
 
 
 def _print_transfer_summary(result: dict) -> None:
@@ -104,6 +189,8 @@ def _print_transfer_summary(result: dict) -> None:
         f"packets={transfer.get('packet_count')} acks={transfer.get('acks_received')} "
         f"timeouts={transfer.get('ack_timeouts')}",
     ]
+    for error in transfer.get("errors", []):
+        lines.append(f"error: {error}")
     if distinct:
         lines.append(f"device notifications ({len(notifications)} total, "
                      f"{len(distinct)} distinct):")
@@ -163,16 +250,23 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
         save_preview(bundle, args.preview, scale=8)
     if args.bundle_out:
         bundle.save(args.bundle_out)
+    execute = _should_execute(args)
+    action = "uploading to panel" if execute else "building no-send transfer plan"
+    print(f"{action}: {len(bundle.frames)} frame(s)", file=sys.stderr)
     result = asyncio.run(
         ProtocolRuntime(profile).upload_frame_bundle(
             bundle,
-            execute=not args.dry_run,
+            execute=execute,
             retry_limit=args.retry_limit,
             timeout_seconds=args.timeout,
         )
     )
     print(json.dumps(result, indent=2))
     _print_transfer_summary(result)
+    transfer = result.get("transfer", {})
+    if not transfer.get("success", False):
+        detail = "; ".join(transfer.get("errors", [])) or "device transfer failed"
+        raise RuntimeError(detail)
 
 
 def _cmd_text(argv: list[str]) -> None:
@@ -278,7 +372,7 @@ def _cmd_text(argv: list[str]) -> None:
             banner.width,
             speed=args.speed,
             mode=args.mode,
-            execute=not args.dry_run,
+            execute=_should_execute(args),
             retry_limit=args.retry_limit,
             timeout_seconds=args.timeout,
         )
@@ -290,7 +384,7 @@ def _cmd_text(argv: list[str]) -> None:
 def _cmd_image(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="coolled image", description="Fit an image and send it.")
     parser.add_argument("path", type=Path)
-    parser.add_argument("--fit", choices=["contain", "cover", "stretch"], default="contain")
+    _add_fit_argument(parser)
     parser.add_argument("--background", default="black")
     parser.add_argument("--duration-ms", type=int, default=1000)
     parser.add_argument(
@@ -342,35 +436,73 @@ def _cmd_image(argv: list[str]) -> None:
         ),
     )
     _add_common_send_arguments(parser)
+    _add_render_cache_arguments(parser)
     args = parser.parse_args(argv)
     profile = DeviceProfile.load(args.profile)
     studio = PixelAnimationStudio(profile.width, profile.height)
     if args.temporal and args.temporal >= 2:
-        bundle = studio.create_temporal_image_bundle(
-            args.path,
-            subframes=args.temporal,
-            fit_mode=args.fit,
-            background=args.background,
-            auto_levels=args.auto_levels,
-            black_point=args.black_level,
-            white_point=args.white_level,
-            rotation=args.rotate,
-            flip_horizontal=args.flip_horizontal,
-            flip_vertical=args.flip_vertical,
+        bundle = _render_cached(
+            args,
+            kind="temporal-image",
+            source=args.path,
+            parameters={
+                "width": profile.width,
+                "height": profile.height,
+                "subframes": args.temporal,
+                "fit_mode": args.fit,
+                "background": args.background,
+                "auto_levels": args.auto_levels,
+                "black_point": args.black_level,
+                "white_point": args.white_level,
+                "rotation": args.rotate,
+                "flip_horizontal": args.flip_horizontal,
+                "flip_vertical": args.flip_vertical,
+            },
+            render=lambda: studio.create_temporal_image_bundle(
+                args.path,
+                subframes=args.temporal,
+                fit_mode=args.fit,
+                background=args.background,
+                auto_levels=args.auto_levels,
+                black_point=args.black_level,
+                white_point=args.white_level,
+                rotation=args.rotate,
+                flip_horizontal=args.flip_horizontal,
+                flip_vertical=args.flip_vertical,
+            ),
         )
     else:
-        bundle = studio.create_image_bundle(
-            args.path,
-            fit_mode=args.fit,
-            background=args.background,
-            duration_ms=args.duration_ms,
-            dither=args.dither,
-            auto_levels=args.auto_levels,
-            black_point=args.black_level,
-            white_point=args.white_level,
-            rotation=args.rotate,
-            flip_horizontal=args.flip_horizontal,
-            flip_vertical=args.flip_vertical,
+        bundle = _render_cached(
+            args,
+            kind="image",
+            source=args.path,
+            parameters={
+                "width": profile.width,
+                "height": profile.height,
+                "fit_mode": args.fit,
+                "background": args.background,
+                "duration_ms": args.duration_ms,
+                "dither": args.dither,
+                "auto_levels": args.auto_levels,
+                "black_point": args.black_level,
+                "white_point": args.white_level,
+                "rotation": args.rotate,
+                "flip_horizontal": args.flip_horizontal,
+                "flip_vertical": args.flip_vertical,
+            },
+            render=lambda: studio.create_image_bundle(
+                args.path,
+                fit_mode=args.fit,
+                background=args.background,
+                duration_ms=args.duration_ms,
+                dither=args.dither,
+                auto_levels=args.auto_levels,
+                black_point=args.black_level,
+                white_point=args.white_level,
+                rotation=args.rotate,
+                flip_horizontal=args.flip_horizontal,
+                flip_vertical=args.flip_vertical,
+            ),
         )
     _print_image_diagnostics(bundle)
     _finish(profile, bundle, args)
@@ -386,7 +518,7 @@ def _cmd_gif(argv: list[str]) -> None:
         default=None,
         help="Evenly subsample longer clips (default: the panel's frame-buffer budget).",
     )
-    parser.add_argument("--fit", choices=["contain", "cover", "stretch"], default="contain")
+    _add_fit_argument(parser)
     parser.add_argument("--background", default="black")
     parser.add_argument(
         "--dither",
@@ -394,23 +526,63 @@ def _cmd_gif(argv: list[str]) -> None:
         default="ordered",
         help="Colour reduction to the panel's 8-colour gamut (default: ordered, best for animation).",
     )
+    parser.add_argument(
+        "--key-color",
+        default=None,
+        metavar="COLOR",
+        help=(
+            "Knock a background colour out to black so a bright, full-scene clip "
+            "does not light the whole 1-bit panel (the subject keeps its colours). "
+            "Pass a colour ('skyblue', '#87CEEB') or 'auto' to sample it from the "
+            "frame border."
+        ),
+    )
+    parser.add_argument(
+        "--key-tolerance",
+        type=int,
+        default=96,
+        metavar="D",
+        help="How close (0-441 RGB distance) a pixel must be to --key-color to be removed (default 96).",
+    )
     _add_common_send_arguments(parser)
+    _add_render_cache_arguments(parser)
     args = parser.parse_args(argv)
     profile = DeviceProfile.load(args.profile)
     studio = PixelAnimationStudio(profile.width, profile.height)
     per_frame = max(1, profile.width * profile.height * 3 // 8)
     frame_budget = PIXEL_BYTES_MAX // per_frame
     max_frames = args.max_frames if args.max_frames is not None else frame_budget
-    bundle = studio.create_gif_bundle(
-        args.path,
-        fps=args.fps,
-        max_frames=max_frames,
-        fit_mode=args.fit,
-        background=args.background,
-        dither=args.dither,
-        rotation=args.rotate,
-        flip_horizontal=args.flip_horizontal,
-        flip_vertical=args.flip_vertical,
+    bundle = _render_cached(
+        args,
+        kind="gif",
+        source=args.path,
+        parameters={
+            "width": profile.width,
+            "height": profile.height,
+            "fps": args.fps,
+            "max_frames": max_frames,
+            "fit_mode": args.fit,
+            "background": args.background,
+            "dither": args.dither,
+            "key_color": args.key_color,
+            "key_tolerance": args.key_tolerance,
+            "rotation": args.rotate,
+            "flip_horizontal": args.flip_horizontal,
+            "flip_vertical": args.flip_vertical,
+        },
+        render=lambda: studio.create_gif_bundle(
+            args.path,
+            fps=args.fps,
+            max_frames=max_frames,
+            fit_mode=args.fit,
+            background=args.background,
+            dither=args.dither,
+            key_color=args.key_color,
+            key_tolerance=args.key_tolerance,
+            rotation=args.rotate,
+            flip_horizontal=args.flip_horizontal,
+            flip_vertical=args.flip_vertical,
+        ),
     )
     _finish(profile, bundle, args)
 

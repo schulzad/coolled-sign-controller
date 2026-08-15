@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -339,6 +340,65 @@ def composite_frame(
     rgba = frame.convert("RGBA")
     canvas = Image.new("RGBA", rgba.size, (background[0], background[1], background[2], 255))
     return Image.alpha_composite(canvas, rgba).convert("RGB")
+
+
+def detect_background_color(image: Image.Image, *, buckets: int = 16) -> tuple[int, int, int]:
+    """Guess a frame's background colour from its border pixels.
+
+    A background (a sky, a solid card) dominates the perimeter of a frame, so
+    the most common colour around the edge is a good chroma-key guess. Colours
+    are bucketed to ``buckets`` levels per channel before counting so an
+    anti-aliased gradient still clusters into one bin; the winning bucket's
+    centre is returned. Detect on the *source* frame, before letterboxing, or a
+    ``contain`` fit's black bars win the vote.
+    """
+    rgb = image.convert("RGB")
+    width, height = rgb.size
+    pixels = rgb.load()
+    step = max(1, 256 // buckets)
+
+    def bucket(color: tuple[int, int, int]) -> tuple[int, int, int]:
+        return tuple(min(255, (value // step) * step + step // 2) for value in color)
+
+    tally: Counter[tuple[int, int, int]] = Counter()
+    for x in range(width):
+        tally[bucket(pixels[x, 0])] += 1
+        tally[bucket(pixels[x, height - 1])] += 1
+    for y in range(height):
+        tally[bucket(pixels[0, y])] += 1
+        tally[bucket(pixels[width - 1, y])] += 1
+    return tally.most_common(1)[0][0]
+
+
+def knockout_color(
+    image: Image.Image,
+    key: tuple[int, int, int],
+    *,
+    tolerance: int = 96,
+    replacement: tuple[int, int, int] = (0, 0, 0),
+) -> Image.Image:
+    """Replace pixels within ``tolerance`` of ``key`` (Euclidean RGB distance) with ``replacement``.
+
+    Knocks a flat/bright background out to black so a 1-bit-per-channel panel --
+    where any channel ``>127`` lights up -- shows only the subject instead of a
+    fully-lit board, while leaving the subject's own colours untouched (unlike a
+    luma cut, which would also drop bright foreground pixels). Distance runs
+    0..441 across the RGB cube.
+    """
+    if tolerance < 0:
+        raise ValueError("tolerance must be >= 0")
+    rgb = image.convert("RGB")
+    key_r, key_g, key_b = key
+    threshold = tolerance * tolerance
+    swapped = [
+        replacement
+        if (r - key_r) ** 2 + (g - key_g) ** 2 + (b - key_b) ** 2 <= threshold
+        else (r, g, b)
+        for (r, g, b) in rgb.getdata()
+    ]
+    out = Image.new("RGB", rgb.size)
+    out.putdata(swapped)
+    return out
 
 
 def _bayer_matrix(order: int) -> list[list[int]]:
