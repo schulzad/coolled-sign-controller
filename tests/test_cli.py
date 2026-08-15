@@ -55,3 +55,9 @@ def test_fit_modes_use_standard_names_and_keep_stretch_alias() -> None:
     assert parser.parse_args(["--fit", "cover"]).fit == "cover"
     assert parser.parse_args(["--fit", "fill"]).fit == "stretch"
     assert parser.parse_args(["--fit", "stretch"]).fit == "stretch"
+
+
+def test_animation_command_keeps_anim_and_gif_aliases() -> None:
+    assert cli._DIRECT["animation"] is cli._cmd_animation
+    assert cli._DIRECT["anim"] is cli._cmd_animation
+    assert cli._DIRECT["gif"] is cli._cmd_animation

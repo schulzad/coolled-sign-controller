@@ -1,10 +1,10 @@
 """Unified ``coolled`` command line.
 
 A thin umbrella over the focused entry points. Discovery, preview, and service
-commands delegate to their existing CLIs; ``text``/``image``/``gif`` are one-shot
-render-and-send helpers built on the animation studio and the protocol runtime.
-These send to the panel by default; pass ``--dry-run`` to build the transfer
-plan (and any preview/bundle) without touching Bluetooth.
+commands delegate to their existing CLIs; ``text``/``image``/``animation`` are
+one-shot render-and-send helpers built on the animation studio and the protocol
+runtime. These send to the panel by default; pass ``--dry-run`` to build the
+transfer plan (and any preview/bundle) without touching Bluetooth.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ Discovery (read-only):
 Render + send (writes to the panel; --dry-run to preview):
   text "MESSAGE"       Native scroll text by default (--speed 0-10); --no-scroll for static
   image <path>         Fit an image to the panel and send
-  gif <path>           Render a GIF at its own frame rate and send
+  animation <path>     Render an animated GIF/WebP/APNG and send (aliases: anim, gif)
   send <bundle.json>   Send a prepared frame bundle
   control ...          Send a control command (brightness/power/...)
 
@@ -508,10 +508,18 @@ def _cmd_image(argv: list[str]) -> None:
     _finish(profile, bundle, args)
 
 
-def _cmd_gif(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(prog="coolled gif", description="Render a GIF and send it.")
+def _cmd_animation(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="coolled animation",
+        description="Render an animated GIF, WebP, APNG, or other Pillow-supported image and send it.",
+    )
     parser.add_argument("path", type=Path)
-    parser.add_argument("--fps", type=float, default=None, help="Force a uniform rate (default: the GIF's own timing).")
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        help="Force a uniform rate (default: the source animation's own timing).",
+    )
     parser.add_argument(
         "--max-frames",
         type=int,
@@ -587,7 +595,13 @@ def _cmd_gif(argv: list[str]) -> None:
     _finish(profile, bundle, args)
 
 
-_DIRECT = {"text": _cmd_text, "image": _cmd_image, "gif": _cmd_gif}
+_DIRECT = {
+    "text": _cmd_text,
+    "image": _cmd_image,
+    "animation": _cmd_animation,
+    "anim": _cmd_animation,
+    "gif": _cmd_animation,
+}
 
 
 def _delegate(main_name: str, prog: str, inner_argv: list[str]) -> None:
