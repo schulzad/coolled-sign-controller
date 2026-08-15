@@ -1,7 +1,7 @@
 Seedscript module description language 2.3
 
 Module("CoolLEDXProtocol") {
-  description: "Encode commands for a CoolLEDX BLE LED sign into wire-ready packets. Frames the byte stream (0x01 start, byte-stuffed length+payload, 0x03 end), builds control commands, packs RGB frames into column-major 1-bit R/G/B planes, and splits them into 128-byte checksummed chunks. Text scrolling is NATIVE: a message is one wide bitmap sent under the text opcode 0x02 and the firmware marches it across the panel (mode 0x06 / speed 0x07), rather than a host-side flipbook. Emits a delivery flow_control hint (await per-chunk ack) that the generic GuardedTransport honors -- this module owns encoding, not the BLE writes. Verified on physical hardware (panel ff:00:00:06:6f:82, CoolLEDX fw6, 64x16, 7-color): brightness/image/animation on 2026-07-13, native text scroll on 2026-07-14."
+  description: "Encode commands for a CoolLEDX BLE LED sign into wire-ready packets. Frames the byte stream (0x01 start, byte-stuffed length+payload, 0x03 end), builds control commands, packs RGB frames into column-major 1-bit R/G/B planes, and splits them into 128-byte checksummed chunks. Text scrolling is NATIVE: a message is one wide bitmap sent under the text opcode 0x02 and the firmware marches it across the panel (mode 0x06 / speed 0x07), rather than a host-side flipbook. Emits a delivery flow_control hint (await per-chunk ack) and a per-chunk ack decoder (0x00 success / 0x06 checksum-error NAK) that the generic GuardedTransport honors -- this module owns encoding, not the BLE writes. Verified on physical hardware (panel ff:00:00:06:6f:82, CoolLEDX fw6, 64x16, 7-color): brightness/image/animation on 2026-07-13, native text scroll on 2026-07-14."
   metaphor: "A telegraph operator composing framed messages, marking which ones need a return click before the next is sent."
   version: "2.3"
   tags: ['ble', 'coolledx', 'protocol', 'codec', 'layer:protocol', 'verified-hardware']
@@ -134,6 +134,23 @@ Module("CoolLEDXProtocol") {
         tags: ["pure", "verified-hardware"]
       }
 
+      Function("map_user_scroll_speed") {
+        description: "Map a user-facing scroll speed 0..10 onto the device SPEED byte 0..255 (linear: 0->0, 10->255). Native-text callers speak the friendly 0..10 scale; this widens it to the wire byte for the SPEED control (0x07), whose polarity is higher=faster (verified 2026-07-14, opposite of animation ms/frame). A non-numeric or out-of-range level is refused rather than silently clamped. Lives beside the codec because it is device-specific knowledge; the SDK's native-text path (play_native_text) calls it before encode_control('speed')."
+        metaphor: "Translating the dial's ten notches into the key's full travel."
+        input_parameters: {
+          level: { type: "number", description: "User scroll speed 0..10 (0 slowest, 10 fastest).", required: true }
+        }
+        output_format: { speed_byte: "int Device SPEED argument 0..255 for control opcode 0x07." }
+        implementation: |
+          def map_user_scroll_speed(level):
+              if isinstance(level, bool) or not isinstance(level, (int, float)):
+                  raise CodecError('scroll speed requires a numeric value')
+              if level < 0 or level > 10:
+                  raise CodecError(f'scroll speed must be 0..10, got {level}')
+              return max(0, min(255, round(level * 255 / 10)))
+        tags: ["pure", "verified-hardware"]
+      }
+
       Function("pixel_bitplanes") {
         description: "Convert a row-major RGB888 frame into three column-major 1-bit planes (R,G,B); MSB is the top pixel; height must be a multiple of 8."
         metaphor: "Slicing a picture into three stacks of punch-card columns."
@@ -259,6 +276,30 @@ Module("CoolLEDXProtocol") {
         tags: ["pure", "verified-hardware"]
       }
 
+      Function("decode_coolledx_ack") {
+        description: "Decode one per-chunk notification from the FFF1 notify channel into an acknowledgement verdict, carried on EncodedPayload.ack_decoder so the generic GuardedTransport stays device-agnostic. Layout observed on hardware 2026-07-13 (cmd 00 <index_be16> <status>): the trailing status byte is 0x00 success or 0x06 checksum-error / NAK. A too-short or empty notification decodes to an unknown status (arrived-but-unverified), never a NAK, so an undecodable reply is not mistaken for a rejection. GuardedTransport re-sends a NAKed packet up to nak_retry_limit; the 0x06 path is unit-tested but not yet exercised on real hardware (only 0x00 success acks observed)."
+        metaphor: "Reading the return click to tell 'received' from 'send it again'."
+        input_parameters: {
+          notification: { type: "bytes", description: "Raw notification bytes from the notify channel.", required: true }
+        }
+        output_format: {
+          index: "int|null Chunk index from bytes[2:4], or null when shorter than 4 bytes.",
+          status: "int|null Trailing status byte, or null when empty.",
+          is_success: "bool status == 0x00.",
+          is_nak: "bool status == 0x06 (checksum error)."
+        }
+        implementation: |
+          def decode_coolledx_ack(notification):
+              data = bytes(notification)
+              if not data:
+                  return {"index": None, "status": None, "is_success": False, "is_nak": False}
+              status = data[-1]
+              index = int.from_bytes(data[2:4], 'big') if len(data) >= 4 else None
+              return {"index": index, "status": status,
+                      "is_success": status == 0x00, "is_nak": status == 0x06}
+        tags: ["pure", "device-agnostic", "verified-hardware"]
+      }
+
       Function("handoff_to_transport") {
         description: "Boundary to GuardedTransport: pass packets and flow_control to the generic transport, which chunks to the negotiated write size, writes to FFF1, and (when await_ack) waits for each per-chunk device notification. Returns the transport's TransferResult. No BLE logic lives here."
         metaphor: "Handing the sealed pages to the operator and waiting for the tally."
@@ -296,7 +337,8 @@ Module("CoolLEDXProtocol") {
           { source: "pixel_bitplanes", target: "chop_into_chunks", description: "Header, split, checksum." },
           { source: "chop_into_chunks", target: "xor_checksum", description: "Per-chunk parity byte." },
           { source: "chop_into_chunks", target: "frame_payload", description: "Frame each chunk." },
-          { source: "chop_into_chunks", target: "attach_flow_control", description: "Mark per-packet await-ack." }
+          { source: "chop_into_chunks", target: "attach_flow_control", description: "Mark per-packet await-ack." },
+          { source: "/encode_frame_bundle", target: "decode_coolledx_ack", description: "Attach the codec ack decoder (0x00 success / 0x06 NAK) to the payload for GuardedTransport." }
         ]
         tags: ["pipe"]
       }
@@ -309,7 +351,8 @@ Module("CoolLEDXProtocol") {
           { source: "build_text_banner_payload", target: "pixel_bitplanes", description: "Pack the wide RGB into 1-bit planes (width implicit)." },
           { source: "build_text_banner_payload", target: "chop_into_chunks", description: "Header, split, checksum under opcode 0x02." },
           { source: "chop_into_chunks", target: "frame_payload", description: "Frame each chunk." },
-          { source: "/encode_text_banner", target: "attach_flow_control", description: "Mark per-packet await-ack (chunked like an image)." }
+          { source: "/encode_text_banner", target: "attach_flow_control", description: "Mark per-packet await-ack (chunked like an image)." },
+          { source: "/encode_text_banner", target: "decode_coolledx_ack", description: "Attach the codec ack decoder for per-chunk NAK detection." }
         ]
         tags: ["pipe", "text", "native-scroll"]
       }
@@ -340,6 +383,7 @@ Module("CoolLEDXProtocol") {
           "Native text scroll is a single wide bitmap under opcode 0x02: byte-identical to a static image (0x03) plus an 81-byte text header, with banner width carried implicitly by the pixel-byte count; the firmware scrolls it, so the host never rasterizes a per-column flipbook.",
           "Text movement and cadence are separate control commands -- mode (0x06; Mode enum, 2=left verified 2026-07-14) and speed (0x07; byte, higher=faster verified 2026-07-14; opposite polarity from animation ms/frame) -- never fields of the text payload.",
           "Frame-transfer EncodedPayloads carry flow_control.await_ack=true; control payloads carry an empty flow_control.",
+          "The codec supplies a per-chunk ack decoder (0x00 success / 0x06 checksum-error NAK) on frame-transfer EncodedPayloads; GuardedTransport uses it to confirm each chunk and re-send a NAKed packet. The 0x06 NAK path is unit-tested but not yet exercised on hardware.",
           "This module never performs BLE writes; delivery and the ack handshake belong to GuardedTransport.",
           "Byte-for-byte encoding of brightness (0x08), image (0x03), and animation (0x04) is verified against real hardware -- 0x04 confirmed 2026-07-13: an 80-frame 64x16 clip displayed while 81 frames uploaded but did not, pinning the 30 KiB frame buffer."
         ]
@@ -357,6 +401,8 @@ Module("CoolLEDXProtocol") {
       - Native text-scroll encoding: one wide bitmap under opcode 0x02 (static-image payload + 81-byte text header, implicit width); motion/cadence handed to the mode/speed control opcodes, not baked into the payload.
       - Carrying the single global animation speed (per-frame hold time in ms) unchanged; temporal-colour (FRC) stills are ordinary 0x04 bundles here.
       - Emitting the delivery flow_control hint on EncodedPayload.
+      - The per-chunk ack decoder (0x00 success / 0x06 checksum-error NAK) carried on EncodedPayload.ack_decoder for GuardedTransport.
+      - The user-facing 0..10 -> device 0..255 native-scroll speed mapping (map_user_scroll_speed).
     delegates: |
       - All BLE connection, chunking-to-MTU, writes, and the per-chunk ack
         handshake to GuardedTransport (honors flow_control.await_ack).
@@ -379,7 +425,7 @@ Module("CoolLEDXProtocol") {
         User-facing CLI maps 0..10 linearly onto 0..255.
     open_work: |
       - Confirm power/switch (0x09) vs power_on (0x13)/power_down (0x12) semantics.
-      - Decode and assert on the ack status byte (0x00 success vs 0x06 checksum error) instead of treating any notification as success (host currently surfaces distinct notifications but does not yet decode NAK).
+      - Exercise the 0x06 checksum-error NAK path on hardware: the ack decoder (decode_coolledx_ack, 0x00/0x06) and GuardedTransport's NAK re-send are implemented and unit-tested, but only 0x00 success acks have been observed on a real panel.
       - Route SignControlService / SDK ``play_text(scroll=true)`` through ``play_native_text`` (CLI ``coolled text`` already uses native scroll + ``--speed 0..10``).
       - Explore 7-color vs full-RGB packing beyond the 1-bit threshold.
   }

@@ -4,10 +4,11 @@ import base64
 import copy
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import uuid4
 
 
@@ -99,7 +100,7 @@ class DeviceProfile:
         self.validate()
 
     @classmethod
-    def load(cls, path: str | Path) -> "DeviceProfile":
+    def load(cls, path: str | Path) -> DeviceProfile:
         source = Path(path)
         try:
             data = json.loads(source.read_text(encoding="utf-8"))
@@ -110,7 +111,7 @@ class DeviceProfile:
         return cls(data)
 
     @classmethod
-    def blank(cls, panel_id: str = "desk-sign", width: int = 48, height: int = 12) -> "DeviceProfile":
+    def blank(cls, panel_id: str = "desk-sign", width: int = 48, height: int = 12) -> DeviceProfile:
         return cls(default_device_profile(panel_id=panel_id, width=width, height=height))
 
     def save(self, path: str | Path) -> Path:
@@ -279,7 +280,7 @@ class FrameBundle:
         loop_mode: str = "loop",
         codec_hint: str = "profile_native",
         metadata: Mapping[str, Any] | None = None,
-    ) -> "FrameBundle":
+    ) -> FrameBundle:
         image_list = list(images)
         if not image_list:
             raise ContractError("At least one image is required")
@@ -301,7 +302,7 @@ class FrameBundle:
         )
 
     @classmethod
-    def from_json_dict(cls, data: Mapping[str, Any]) -> "FrameBundle":
+    def from_json_dict(cls, data: Mapping[str, Any]) -> FrameBundle:
         if data.get("frame_encoding") != "base64":
             raise ContractError("Only base64 frame-bundle JSON is supported")
         try:
@@ -325,7 +326,7 @@ class FrameBundle:
         )
 
     @classmethod
-    def load(cls, path: str | Path) -> "FrameBundle":
+    def load(cls, path: str | Path) -> FrameBundle:
         source = Path(path)
         try:
             data = json.loads(source.read_text(encoding="utf-8"))

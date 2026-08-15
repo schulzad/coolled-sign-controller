@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import binascii
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
 
 from opensign.contracts import DeviceProfile, FrameBundle
 
@@ -15,9 +16,9 @@ class CodecError(RuntimeError):
 class Codec(Protocol):
     name: str
 
-    def encode_control(self, command: str, value: Any = None) -> "EncodedPayload": ...
+    def encode_control(self, command: str, value: Any = None) -> EncodedPayload: ...
 
-    def encode_frame_bundle(self, frame_bundle: FrameBundle) -> "EncodedPayload": ...
+    def encode_frame_bundle(self, frame_bundle: FrameBundle) -> EncodedPayload: ...
 
 
 @dataclass(slots=True)
@@ -31,6 +32,10 @@ class EncodedPayload:
     # {"await_ack": True, "ack_timeout": 2.0, "scope": "per_packet"}.
     # Empty means "fire packets without waiting" (the default for control).
     flow_control: dict[str, Any] = field(default_factory=dict)
+    # Optional codec-supplied ack decoder (bytes -> {index, status, is_success,
+    # is_nak}). Kept off ``to_dict`` because it is a callable; the transport uses
+    # it to tell a per-chunk success from a checksum-error NAK and re-send.
+    ack_decoder: Callable[[bytes], dict[str, Any]] | None = None
 
     def to_dict(self, include_packet_hex: bool = True) -> dict[str, Any]:
         data = {

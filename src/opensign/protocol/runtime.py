@@ -37,6 +37,7 @@ class ProtocolRuntime:
                 retry_limit=retry_limit,
                 await_ack=await_ack,
                 ack_timeout=ack_timeout,
+                ack_decoder=encoded.ack_decoder,
             )
         finally:
             if isinstance(transport, BleakTransport):
@@ -129,6 +130,7 @@ class ProtocolRuntime:
                 retry_limit=retry_limit,
                 await_ack=bool(banner_fc.get("await_ack", False)),
                 ack_timeout=float(banner_fc.get("ack_timeout", 2.0)),
+                ack_decoder=banner.ack_decoder,
             )
             transfers.append({"step": "banner", "transfer": _transfer_dict(banner_xfer)})
 

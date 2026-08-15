@@ -295,7 +295,7 @@ Module("GuardedTransport") {
       - Ack-paced image transfer: acks_received=4, ack_timeouts=0 for a 4-chunk frame.
       - The opensign-send bundle path (now write-by-default; --dry-run produces the plan) drives the panel end to end, including the native text-scroll banner (0x02) verified 2026-07-14.
     open_work: |
-      - Wire the codec-supplied ack decoder (CoolLEDXProtocol) into send_packets and exercise NAK re-send on hardware (contract specified here, code pending).
+      - Exercise NAK re-send on hardware: the codec-supplied ack decoder is now wired into send_packets (match_ack / _classify_ack) and a decoded 0x06 checksum error re-sends the packet up to nak_retry_limit (naks / nak_retries in TransferResult), but only 0x00 success acks have been observed on a real panel, so the NAK path is unexercised.
       - Tune the animation transfer deadline / progress / cancellation for ~500-chunk uploads.
       - Reconnect policy (profile.connection.reconnect_policy) is declared but not yet exercised.
   }

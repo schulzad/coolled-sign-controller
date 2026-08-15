@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from opensign.contracts import DeviceProfile, default_device_profile, utc_now_iso
 
