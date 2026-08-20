@@ -103,3 +103,51 @@ def test_api_animation_image_temporal_and_bundle(tmp_path: Path) -> None:
     # An invalid base64 animation source is a client error, not a crash.
     bad = client.post("/animation", json={"panel_id": "desk-sign", "source_base64": "not@@base64"})
     assert bad.status_code == 400
+
+
+def test_api_text_native_scroll_and_animation_scroll(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from opensign.sdk.api import create_app
+
+    profile = DeviceProfile(default_device_profile())
+    profile_path = profile.save(tmp_path / "profile.json")
+    app = create_app(profile_path=profile_path, artifact_dir=None)
+    client = TestClient(app)
+
+    # Default /text scrolls via the device-native firmware path: a wide banner,
+    # not a host-side flipbook, so the response carries native_text and no bundle.
+    native = client.post("/text", json={"panel_id": "desk-sign", "text": "HELLO"})
+    assert native.status_code == 200
+    native_body = native.json()
+    assert native_body["delivery_status"] == "rendered_only"
+    assert native_body["native_text"]["banner_width"] > 0
+    assert "bundle" not in native_body
+
+    # native=false keeps the host-side scroll flipbook (a real FrameBundle).
+    flipbook = client.post(
+        "/text", json={"panel_id": "desk-sign", "text": "HELLO WORLD", "native": False}
+    )
+    assert flipbook.status_code == 200
+    assert flipbook.json()["bundle"]["frames"] >= 1
+
+    # /animation scroll composites a travelling sprite -> many more frames than
+    # the 2-frame source would produce playing in place.
+    scrolled = client.post(
+        "/animation",
+        json={
+            "panel_id": "desk-sign",
+            "source_base64": _tiny_gif_base64(),
+            "scroll": True,
+            "scroll_px": 2,
+        },
+    )
+    assert scrolled.status_code == 200
+    assert scrolled.json()["bundle"]["frames"] > 5
+
+    # A data: URI prefix on the animation source is tolerated (parity with /image).
+    data_uri = "data:image/gif;base64," + _tiny_gif_base64()
+    prefixed = client.post("/animation", json={"panel_id": "desk-sign", "source_base64": data_uri})
+    assert prefixed.status_code == 200
+    assert prefixed.json()["bundle"]["frames"] >= 2
