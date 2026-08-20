@@ -25,6 +25,7 @@ from opensign.animation.preview import save_preview
 from opensign.animation.render import render_wide_text
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile, FrameBundle
+from opensign.protocol.codec import CodecError
 from opensign.protocol.codecs.coolledx import (
     MODE_LEFT,
     PIXEL_BYTES_MAX,
@@ -35,6 +36,29 @@ from opensign.protocol.codecs.coolledx import (
 from opensign.protocol.runtime import ProtocolRuntime
 
 DEFAULT_PROFILE = Path("device_profile.local.json")
+STARTER_PROFILE = Path("device_profile.json")
+
+
+def _load_profile(args: argparse.Namespace) -> DeviceProfile:
+    """Load the requested profile, falling back to the checked-in starter.
+
+    ``--profile`` defaults to the git-ignored ``device_profile.local.json`` that a
+    user generates for their own panel. A fresh clone does not have one yet, so
+    when the default is requested but absent we fall back to the checked-in
+    ``device_profile.json`` starter (codec-valid 64x16) with a note, letting
+    ``--preview``/``--dry-run`` work off the bat. An explicit ``--profile`` path
+    is always honoured as-is.
+    """
+    path = args.profile
+    if path == DEFAULT_PROFILE and not path.exists() and STARTER_PROFILE.exists():
+        print(
+            f"note: {DEFAULT_PROFILE} not found; using the checked-in starter "
+            f"{STARTER_PROFILE}. Run 'coolled inspect <id> --profile-out "
+            f"{DEFAULT_PROFILE}' to profile your own panel.",
+            file=sys.stderr,
+        )
+        path = STARTER_PROFILE
+    return DeviceProfile.load(path)
 
 # command -> (module providing main(), optional inner subcommand to prepend)
 _DELEGATED: dict[str, tuple[str, str | None]] = {
@@ -253,14 +277,28 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
     execute = _should_execute(args)
     action = "uploading to panel" if execute else "building no-send transfer plan"
     print(f"{action}: {len(bundle.frames)} frame(s)", file=sys.stderr)
-    result = asyncio.run(
-        ProtocolRuntime(profile).upload_frame_bundle(
-            bundle,
-            execute=execute,
-            retry_limit=args.retry_limit,
-            timeout_seconds=args.timeout,
+    try:
+        result = asyncio.run(
+            ProtocolRuntime(profile).upload_frame_bundle(
+                bundle,
+                execute=execute,
+                retry_limit=args.retry_limit,
+                timeout_seconds=args.timeout,
+            )
         )
-    )
+    except CodecError as exc:
+        # A starter/unprofiled device has no verified codec, so it cannot build a
+        # wire plan -- but preview/bundle output above does not need one. Fail
+        # softly for preview/dry-run; a real send still errors.
+        if execute:
+            raise
+        print(
+            f"note: this profile has no codec that can build a transfer plan "
+            f"({exc}). Preview/bundle output was still written. Profile your panel "
+            f"with 'coolled inspect' to enable --dry-run plans and sending.",
+            file=sys.stderr,
+        )
+        return
     print(json.dumps(result, indent=2))
     _print_transfer_summary(result)
     transfer = result.get("transfer", {})
@@ -311,7 +349,7 @@ def _cmd_text(argv: list[str]) -> None:
         if args.speed < USER_SCROLL_SPEED_MIN or args.speed > USER_SCROLL_SPEED_MAX:
             parser.error(f"--speed must be {USER_SCROLL_SPEED_MIN}..{USER_SCROLL_SPEED_MAX}")
 
-    profile = DeviceProfile.load(args.profile)
+    profile = _load_profile(args)
 
     if args.no_scroll or args.flipbook:
         studio = PixelAnimationStudio(profile.width, profile.height)
@@ -438,7 +476,7 @@ def _cmd_image(argv: list[str]) -> None:
     _add_common_send_arguments(parser)
     _add_render_cache_arguments(parser)
     args = parser.parse_args(argv)
-    profile = DeviceProfile.load(args.profile)
+    profile = _load_profile(args)
     studio = PixelAnimationStudio(profile.width, profile.height)
     if args.temporal and args.temporal >= 2:
         bundle = _render_cached(
@@ -552,46 +590,109 @@ def _cmd_animation(argv: list[str]) -> None:
         metavar="D",
         help="How close (0-441 RGB distance) a pixel must be to --key-color to be removed (default 96).",
     )
+    parser.add_argument(
+        "--scroll",
+        action="store_true",
+        help=(
+            "Scroll the animation across the panel instead of playing in place: "
+            "the sprite (scaled to panel height) enters one edge, exits the other, "
+            "then loops, while its own animation keeps playing. Faked host-side, "
+            "so it obeys the frame budget (see --scroll-px)."
+        ),
+    )
+    parser.add_argument(
+        "--scroll-px",
+        type=int,
+        default=2,
+        metavar="N",
+        help=(
+            "Pixels moved per frame when --scroll (higher=faster and fewer frames; "
+            "one pass costs about (panel_width+sprite_width)/N frames). Default 2."
+        ),
+    )
+    parser.add_argument(
+        "--direction",
+        choices=["left", "right"],
+        default="left",
+        help="Scroll direction (only with --scroll; default left).",
+    )
     _add_common_send_arguments(parser)
     _add_render_cache_arguments(parser)
     args = parser.parse_args(argv)
-    profile = DeviceProfile.load(args.profile)
+    profile = _load_profile(args)
     studio = PixelAnimationStudio(profile.width, profile.height)
     per_frame = max(1, profile.width * profile.height * 3 // 8)
     frame_budget = PIXEL_BYTES_MAX // per_frame
     max_frames = args.max_frames if args.max_frames is not None else frame_budget
-    bundle = _render_cached(
-        args,
-        kind="gif",
-        source=args.path,
-        parameters={
-            "width": profile.width,
-            "height": profile.height,
-            "fps": args.fps,
-            "max_frames": max_frames,
-            "fit_mode": args.fit,
-            "background": args.background,
-            "dither": args.dither,
-            "key_color": args.key_color,
-            "key_tolerance": args.key_tolerance,
-            "rotation": args.rotate,
-            "flip_horizontal": args.flip_horizontal,
-            "flip_vertical": args.flip_vertical,
-        },
-        render=lambda: studio.create_gif_bundle(
-            args.path,
-            fps=args.fps,
-            max_frames=max_frames,
-            fit_mode=args.fit,
-            background=args.background,
-            dither=args.dither,
-            key_color=args.key_color,
-            key_tolerance=args.key_tolerance,
-            rotation=args.rotate,
-            flip_horizontal=args.flip_horizontal,
-            flip_vertical=args.flip_vertical,
-        ),
-    )
+    if args.scroll:
+        scroll_fps = args.fps if args.fps is not None else 20.0
+        bundle = _render_cached(
+            args,
+            kind="gif-scroll",
+            source=args.path,
+            parameters={
+                "width": profile.width,
+                "height": profile.height,
+                "pixels_per_frame": args.scroll_px,
+                "fps": scroll_fps,
+                "direction": args.direction,
+                "max_frames": max_frames,
+                "background": args.background,
+                "dither": args.dither,
+                "key_color": args.key_color,
+                "key_tolerance": args.key_tolerance,
+                "rotation": args.rotate,
+                "flip_horizontal": args.flip_horizontal,
+                "flip_vertical": args.flip_vertical,
+            },
+            render=lambda: studio.create_scrolling_gif_bundle(
+                args.path,
+                pixels_per_frame=args.scroll_px,
+                fps=scroll_fps,
+                direction=args.direction,
+                max_frames=max_frames,
+                background=args.background,
+                dither=args.dither,
+                key_color=args.key_color,
+                key_tolerance=args.key_tolerance,
+                rotation=args.rotate,
+                flip_horizontal=args.flip_horizontal,
+                flip_vertical=args.flip_vertical,
+            ),
+        )
+    else:
+        bundle = _render_cached(
+            args,
+            kind="gif",
+            source=args.path,
+            parameters={
+                "width": profile.width,
+                "height": profile.height,
+                "fps": args.fps,
+                "max_frames": max_frames,
+                "fit_mode": args.fit,
+                "background": args.background,
+                "dither": args.dither,
+                "key_color": args.key_color,
+                "key_tolerance": args.key_tolerance,
+                "rotation": args.rotate,
+                "flip_horizontal": args.flip_horizontal,
+                "flip_vertical": args.flip_vertical,
+            },
+            render=lambda: studio.create_gif_bundle(
+                args.path,
+                fps=args.fps,
+                max_frames=max_frames,
+                fit_mode=args.fit,
+                background=args.background,
+                dither=args.dither,
+                key_color=args.key_color,
+                key_tolerance=args.key_tolerance,
+                rotation=args.rotate,
+                flip_horizontal=args.flip_horizontal,
+                flip_vertical=args.flip_vertical,
+            ),
+        )
     _finish(profile, bundle, args)
 
 

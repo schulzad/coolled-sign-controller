@@ -43,8 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--output", type=Path, help="Write the combined inspection report to JSON.")
     inspect_parser.add_argument("--profile-out", type=Path, help="Write a device-profile candidate.")
     inspect_parser.add_argument("--panel-id", default="desk-sign")
-    inspect_parser.add_argument("--width", type=int, default=48)
-    inspect_parser.add_argument("--height", type=int, default=12)
+    inspect_parser.add_argument("--width", type=int, default=64)
+    inspect_parser.add_argument("--height", type=int, default=16)
     inspect_parser.add_argument(
         "--no-descriptors",
         action="store_true",

@@ -12,16 +12,29 @@ from typing import Any
 from PIL import Image
 
 from opensign.animation.preview import save_preview
-from opensign.animation.render import image_from_base64
+from opensign.animation.render import apply_orientation, image_from_base64, render_wide_text
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import ContractError, DeviceProfile, FrameBundle, utc_now_iso
 from opensign.protocol.codec import CodecError
-from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
+from opensign.protocol.codecs.coolledx import MODE_LEFT, PIXEL_BYTES_MAX
 from opensign.protocol.runtime import ProtocolRuntime
 
 from .integrations import IntegrationRegistry
 from .scheduler import InProcessScheduler
 from .trace import TraceStore
+
+
+def _decode_media_base64(value: str, kind: str) -> bytes:
+    """Decode base64 media, tolerating a ``data:`` URI prefix like the image path.
+
+    Mirrors :func:`opensign.animation.render.image_from_base64` so the animation
+    route accepts the same ``data:...;base64,`` payloads a browser produces.
+    """
+    payload = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"{kind} source is not valid base64: {exc}") from exc
 
 
 @dataclass(slots=True)
@@ -130,6 +143,18 @@ class OpenSignRuntime:
         preview_path = save_preview(bundle, directory / f"preview{preview_suffix}", scale=12, grid=True)
         return {"frame_bundle": str(bundle_path), "preview": str(preview_path)}
 
+    def _store_banner_artifact(
+        self, panel_id: str, trace_id: str, banner: Image.Image
+    ) -> dict[str, str]:
+        """Persist the wide native-scroll banner (there is no FrameBundle for it)."""
+        if self.artifact_dir is None:
+            return {}
+        directory = self.artifact_dir / panel_id / trace_id
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "banner.png"
+        banner.save(path)
+        return {"banner": str(path)}
+
     async def play_bundle(
         self,
         panel_id: str,
@@ -213,12 +238,17 @@ class OpenSignRuntime:
     ) -> dict[str, Any]:
         state = self._state(panel_id)
         studio = PixelAnimationStudio(state.profile.width, state.profile.height)
+        # A per-pixel scroll flipbook can exceed the device frame buffer on a long
+        # phrase; cap it to the budget (thinned, same speed) as the CLI does.
+        per_frame = max(1, state.profile.width * state.profile.height * 3 // 8)
+        budget = max(1, PIXEL_BYTES_MAX // per_frame)
         bundle = studio.create_text_bundle(
             text,
             scroll=scroll,
             frames_per_second=frames_per_second,
             foreground=foreground,
             background=background,
+            max_frames=budget if scroll else None,
             **self._orientation(state),
         )
         return await self.play_bundle(
@@ -227,6 +257,107 @@ class OpenSignRuntime:
             execute=execute,
             request_id=request_id,
         )
+
+    async def play_native_text(
+        self,
+        panel_id: str,
+        text: str,
+        *,
+        speed: int = 8,
+        mode: int = MODE_LEFT,
+        foreground: str = "white",
+        background: str = "black",
+        font_size: int | None = None,
+        execute: bool | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Scroll text with the device's native firmware scroll (opcode 0x02).
+
+        Renders one wide banner at the panel height and lets the firmware march it
+        across, matching ``coolled text`` (the default CLI behaviour) rather than
+        building a host-side flipbook. ``speed`` is the 0..10 user scale; ``mode``
+        is the scroll-direction byte (2 = left). Degrades to a rendered-only
+        result -- it does not raise -- when the profile has no codec that supports
+        native text and delivery was not requested, so an unprofiled panel still
+        reports cleanly.
+        """
+        state = self._state(panel_id)
+        orientation = self._orientation(state)
+        if orientation["rotation"] in (90, 270):
+            raise ValueError(
+                "native text scroll does not support 90/270 rotation; "
+                "use scroll=true with native=false for the host flipbook"
+            )
+        banner = render_wide_text(
+            text,
+            state.profile.height,
+            foreground=foreground,
+            background=background,
+            font_size=font_size,
+        )
+        banner = apply_orientation(
+            banner,
+            rotation=orientation["rotation"],
+            flip_horizontal=orientation["flip_horizontal"],
+            flip_vertical=orientation["flip_vertical"],
+            preserve_size=False,
+        )
+        should_execute = self.execute if execute is None else execute
+        trace_id = request_id or self.traces.new_trace()
+        native_summary = {"text": text, "banner_width": banner.width, "speed": speed, "mode": mode}
+        self.traces.add(
+            trace_id,
+            "validate_request",
+            "ok",
+            panel_id=panel_id,
+            native_text=native_summary,
+            execute=should_execute,
+        )
+        artifacts = self._store_banner_artifact(panel_id, trace_id, banner)
+        if artifacts:
+            self.traces.add(trace_id, "render_artifacts", "ok", **artifacts)
+
+        runtime = ProtocolRuntime(state.profile)
+        try:
+            delivery = await runtime.play_native_text(
+                text,
+                banner.tobytes(),
+                banner.width,
+                speed=speed,
+                mode=mode,
+                execute=should_execute,
+            )
+            delivery_status = "transferred" if should_execute else "dry_run_packet_plan"
+            self.traces.add(trace_id, "ble_delivery", "ok", mode=delivery_status)
+        except CodecError as exc:
+            if should_execute:
+                self.traces.add(trace_id, "ble_delivery", "error", error=str(exc))
+                raise
+            delivery = {
+                "status": "rendered_only",
+                "reason": str(exc),
+                "native_text": native_summary,
+            }
+            delivery_status = "rendered_only"
+            self.traces.add(trace_id, "ble_delivery", "skipped", reason=str(exc))
+
+        state.active_playback = {
+            "trace_id": trace_id,
+            "native_text": native_summary,
+            "delivery_status": delivery_status,
+            "artifacts": artifacts,
+        }
+        state.last_delivery = copy.deepcopy(delivery)
+        state.last_trace_id = trace_id
+        state.updated_at = utc_now_iso()
+        return {
+            "trace_id": trace_id,
+            "panel_id": panel_id,
+            "native_text": native_summary,
+            "artifacts": artifacts,
+            "delivery_status": delivery_status,
+            "delivery": delivery,
+        }
 
     async def play_image(
         self,
@@ -309,32 +440,55 @@ class OpenSignRuntime:
         fit_mode: str = "contain",
         background: str = "black",
         dither: str = "ordered",
+        key_color: str | None = None,
+        key_tolerance: int = 96,
+        scroll: bool = False,
+        scroll_px: int = 2,
+        direction: str = "left",
         execute: bool | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
         """Decode a base64 GIF/APNG, compile it to a bounded bundle, and play it.
 
         The frame count is clamped to the device frame-buffer budget (evenly
-        subsampled, holds folded) so a long clip cannot blow the codec limit.
+        subsampled, holds folded) so a long clip cannot blow the codec limit. With
+        ``scroll`` the clip is composited as a sprite that travels across the panel
+        (host-side, mirroring ``coolled animation --scroll``) instead of playing in
+        place; ``scroll_px`` is the pixels-per-frame step and ``direction`` is
+        ``"left"`` or ``"right"``. ``key_color`` (a colour or ``"auto"``) knocks a
+        background out so a bright clip does not light the whole 1-bit panel.
         """
         state = self._state(panel_id)
         studio = PixelAnimationStudio(state.profile.width, state.profile.height)
-        try:
-            raw = base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ValueError(f"animation source is not valid base64: {exc}") from exc
+        raw = _decode_media_base64(value, "animation")
         per_frame = max(1, state.profile.width * state.profile.height * 3 // 8)
         budget = max(1, PIXEL_BYTES_MAX // per_frame)
         limit = budget if max_frames is None else max_frames
-        bundle = studio.create_gif_bundle(
-            io.BytesIO(raw),
-            fps=fps,
-            max_frames=limit,
-            fit_mode=fit_mode,
-            background=background,
-            dither=dither,
-            **self._orientation(state),
-        )
+        if scroll:
+            bundle = studio.create_scrolling_gif_bundle(
+                io.BytesIO(raw),
+                pixels_per_frame=scroll_px,
+                fps=fps if fps is not None else 20.0,
+                direction=direction,
+                max_frames=limit,
+                background=background,
+                dither=dither,
+                key_color=key_color,
+                key_tolerance=key_tolerance,
+                **self._orientation(state),
+            )
+        else:
+            bundle = studio.create_gif_bundle(
+                io.BytesIO(raw),
+                fps=fps,
+                max_frames=limit,
+                fit_mode=fit_mode,
+                background=background,
+                dither=dither,
+                key_color=key_color,
+                key_tolerance=key_tolerance,
+                **self._orientation(state),
+            )
         return await self.play_bundle(panel_id, bundle, execute=execute, request_id=request_id)
 
     async def set_brightness(

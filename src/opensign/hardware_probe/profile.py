@@ -83,8 +83,8 @@ def build_device_profile(
     gatt_map: Mapping[str, Any] | None = None,
     *,
     panel_id: str = "desk-sign",
-    width: int = 48,
-    height: int = 12,
+    width: int = 64,
+    height: int = 16,
     select_singletons: bool = False,
 ) -> DeviceProfile:
     """Create a conservative profile candidate without inventing protocol behavior."""
