@@ -9,6 +9,7 @@ from PIL import Image, ImageSequence
 from opensign.contracts import FrameBundle, utc_now_iso
 
 from .render import (
+    alpha_key,
     apply_levels,
     composite_frame,
     compute_auto_levels,
@@ -22,6 +23,7 @@ from .render import (
     quantize_to_panel,
     reachable_channels,
     render_checker_animation,
+    render_scroll_animation,
     render_scroll_text,
     render_static_text,
     render_test_pattern,
@@ -90,6 +92,26 @@ class PixelAnimationStudio:
         represent the intermediate tones a smooth filter produces.
         """
         return Image.Resampling.NEAREST if dither == "none" else None
+
+    @staticmethod
+    def _scale_to_height(
+        image: Image.Image, height: int, resample: Image.Resampling | None
+    ) -> Image.Image:
+        """Scale ``image`` to exactly ``height`` px, keeping aspect ratio (and mode).
+
+        Used to turn a source animation frame into a sprite the panel height,
+        letting its width float to its natural size so it can scroll. When
+        ``resample`` is unset, downscaling uses LANCZOS and upscaling NEAREST
+        (matching :func:`render._pick_resample`).
+        """
+        if image.height == height:
+            return image
+        if resample is None:
+            resample = (
+                Image.Resampling.LANCZOS if image.height > height else Image.Resampling.NEAREST
+            )
+        new_width = max(1, round(image.width * height / image.height))
+        return image.resize((new_width, height), resample=resample)
 
     def compile_images(
         self,
@@ -474,6 +496,122 @@ class PixelAnimationStudio:
             fitted,
             frame_durations_ms=durations,
             frames_per_second=(1000 / median_ms) if median_ms else None,
+            loop_mode=loop_mode,
+            rotation=rotation,
+            flip_horizontal=flip_horizontal,
+            flip_vertical=flip_vertical,
+            dither=dither,
+            metadata=metadata,
+        )
+
+    def create_scrolling_gif_bundle(
+        self,
+        source: str | Path,
+        *,
+        pixels_per_frame: int = 2,
+        fps: float = 20.0,
+        direction: str = "left",
+        max_frames: int = 0,
+        background: str = "black",
+        dither: str = "ordered",
+        key_color: str | tuple[int, int, int] | None = None,
+        key_tolerance: int = 96,
+        loop_mode: str = "loop",
+        rotation: int = 0,
+        flip_horizontal: bool = False,
+        flip_vertical: bool = False,
+        default_frame_ms: int = 100,
+    ) -> FrameBundle:
+        """Render an animated source as a sprite that scrolls across the panel.
+
+        Native firmware scroll only marches a single static bitmap, so a GIF that
+        should animate *and* travel is faked here: every source frame is scaled to
+        the panel height (keeping its natural width and transparency), then slid
+        across a panel-sized canvas one step per output frame while its own
+        animation plays by elapsed time (see :func:`render.render_scroll_animation`).
+
+        ``pixels_per_frame`` sets the spatial step and ``fps`` the output cadence,
+        so scroll speed is ``pixels_per_frame * fps`` px/s. One full pass needs
+        ``panel_width + sprite_width`` px of travel, which can exceed the device
+        frame budget; pass ``max_frames`` and the flipbook is thinned to fit while
+        keeping the same speed (coarser step, longer hold), then loops.
+
+        ``key_color`` makes a background colour transparent before compositing --
+        pass a colour (``"skyblue"``, ``"#87CEEB"``, an RGB tuple) or ``"auto"``
+        to sample the source border -- so an opaque-background clip still glides
+        over black instead of inside a lit rectangle. Sprites that already carry
+        transparency composite cleanly without it.
+        """
+        if pixels_per_frame <= 0:
+            raise ValueError("pixels_per_frame must be positive")
+        if fps <= 0:
+            raise ValueError("fps must be positive")
+
+        frames: list[Image.Image] = []
+        durations: list[int] = []
+        with Image.open(source) as animated:
+            for frame in ImageSequence.Iterator(animated):
+                frames.append(frame.convert("RGBA"))
+                raw = frame.info.get("duration", default_frame_ms)
+                durations.append(int(raw) if raw and int(raw) > 0 else default_frame_ms)
+        if not frames:
+            raise ValueError("source contains no frames")
+
+        resolved_key: tuple[int, int, int] | None = None
+        if key_color is not None:
+            # Detect on a source frame (pre-scale) so the sprite's true backdrop
+            # wins the border vote rather than any transparent padding.
+            resolved_key = (
+                detect_background_color(frames[len(frames) // 2])
+                if isinstance(key_color, str) and key_color == "auto"
+                else parse_color(key_color)
+            )
+
+        resample = self._resample_for(dither)
+        sprites: list[Image.Image] = []
+        for frame in frames:
+            sprite = self._scale_to_height(frame, self.height, resample)
+            if resolved_key is not None:
+                sprite = alpha_key(sprite, resolved_key, tolerance=key_tolerance)
+            sprites.append(sprite)
+
+        step_ms = max(1, round(1000 / fps))
+        panel_frames, panel_durations = render_scroll_animation(
+            sprites,
+            durations,
+            self.width,
+            self.height,
+            pixels_per_frame=pixels_per_frame,
+            step_ms=step_ms,
+            background=background,
+            direction=direction,
+        )
+        if max_frames > 0:
+            panel_frames, panel_durations = _thin_to_budget(
+                panel_frames, panel_durations, max_frames
+            )
+
+        median_ms = (
+            sorted(panel_durations)[len(panel_durations) // 2] if panel_durations else step_ms
+        )
+        metadata: dict[str, Any] = {
+            "pattern": "gif-scroll",
+            "source": str(source),
+            "gif_frames": len(sprites),
+            "scroll_direction": direction,
+            "pixels_per_frame": pixels_per_frame,
+            "sprite_width": sprites[0].width,
+            "scroll_frames": len(panel_frames),
+            "coolledx_speed": median_ms,
+        }
+        if resolved_key is not None:
+            metadata["key_color"] = list(resolved_key)
+            metadata["key_tolerance"] = key_tolerance
+            metadata["key_source"] = "auto" if key_color == "auto" else str(key_color)
+        return self.compile_images(
+            panel_frames,
+            frame_durations_ms=panel_durations,
+            frames_per_second=(1000 / median_ms) if median_ms else fps,
             loop_mode=loop_mode,
             rotation=rotation,
             flip_horizontal=flip_horizontal,

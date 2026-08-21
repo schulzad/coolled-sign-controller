@@ -8,7 +8,7 @@ from opensign.contracts import DeviceProfile, FrameBundle, PlaybackRequest, defa
 
 def test_default_device_profile_is_conservative() -> None:
     profile = DeviceProfile(default_device_profile())
-    assert profile.dimensions == (48, 12)
+    assert profile.dimensions == (64, 16)
     assert profile.protocol["codec"] == "capture_required"
     assert profile.write_characteristic is None
     assert profile.notify_characteristic is None

@@ -7,9 +7,9 @@
   "protocol_family": "unknown",
   "confidence": 0.0,
   "dimensions": {
-    "width": 48,
-    "height": 12,
-    "source": "user_asserted",
+    "width": 64,
+    "height": 16,
+    "source": "default_scaffold",
     "verified": false
   },
   "advertisement": {
@@ -62,10 +62,10 @@
   },
   "evidence": [
     {
-      "type": "user_assertion",
-      "claim": "Panel dimensions are 48x12.",
+      "type": "default_scaffold",
+      "claim": "Default panel geometry 64x16 (codec-valid starter; not a measurement of any specific panel). Run 'coolled inspect' to confirm your hardware.",
       "status": "unverified",
-      "source": "OpenSign/CoolLED SeedScript Module Pack 2.3"
+      "source": "OpenSign/CoolLED starter profile"
     }
   ],
   "unknowns": [

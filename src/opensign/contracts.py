@@ -24,8 +24,15 @@ def stable_frame_hash(frame: bytes) -> str:
     return hashlib.sha256(frame).hexdigest()
 
 
-def default_device_profile(panel_id: str = "desk-sign", width: int = 48, height: int = 12) -> dict[str, Any]:
-    """Return a conservative profile with no device-specific protocol claims."""
+def default_device_profile(panel_id: str = "desk-sign", width: int = 64, height: int = 16) -> dict[str, Any]:
+    """Return a conservative profile with no device-specific protocol claims.
+
+    The default geometry (64x16) is the most common CoolLEDX panel and, unlike
+    the earlier 48x12 scaffold, is codec-valid (the bitplane codec needs a height
+    that is a multiple of 8) so a freshly generated profile can render and
+    dry-run without tripping. It is still a scaffold, not a claim about any
+    specific panel -- ``dimensions.verified`` stays false until inspection.
+    """
     return {
         "$schema": "schema/device_profile.schema.json",
         "schema_version": "2.3",

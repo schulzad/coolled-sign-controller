@@ -16,6 +16,53 @@
 
 The design rule is **evidence before claims**: there are no hardcoded UUIDs, command bytes, or keys. Everything the codec does is backed by a device-profile field carrying a status (`unverified` → `experimental` → `verified`) and a cited source, so the tool never pretends to know more about your hardware than it has proven.
 
+## Gallery
+
+The middle column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-colour, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right will show.
+
+| Source | OpenSign render → panel | On the panel |
+| :---: | :---: | :---: |
+| **Nyan cat**<br><sub>`nian.gif` · 12 frames · `--dither none`</sub> | <img src="examples/generated/gallery/nian.preview.gif" width="380" alt="Nyan cat compiled for a 64×16 panel"> | <img src="examples/recordings/nian.recording.png" width="380" alt="Nyan cat on the panel — recording coming soon"> |
+| **Sonic**<br><sub>`sonic-the-hedgehog.gif` · 4 frames · `--dither none`</sub> | <img src="examples/generated/gallery/sonic-the-hedgehog.preview.gif" width="380" alt="Sonic compiled for a 64×16 panel"> | <img src="examples/recordings/sonic-the-hedgehog.recording.png" width="380" alt="Sonic on the panel — recording coming soon"> |
+| **Matrix still**<br><sub>`matrix_still.png` · still · `--dither ordered`</sub> | <img src="examples/generated/gallery/matrix-still.png" width="380" alt="Matrix silhouette rendered for a 64×16 panel, channels overlapping into yellow and white"> | <img src="examples/recordings/matrix-still.recording.png" width="380" alt="Matrix still on the panel — recording coming soon"> |
+
+<details>
+<summary>Reproduce the renders</summary>
+
+```bash
+coolled anim examples/downloaded/nian.gif \
+  --fit contain --key-color auto --dither none \
+  --preview examples/generated/gallery/nian.preview.gif
+
+coolled anim examples/downloaded/sonic-the-hedgehog.gif \
+  --fit contain --key-color auto --dither none \
+  --preview examples/generated/gallery/sonic-the-hedgehog.preview.gif
+
+coolled image examples/generated/matrix_still.png \
+  --fit cover --dither ordered \
+  --preview examples/generated/gallery/matrix-still.png
+
+# Dither comparison (colorbar.source.png is a synthesized full-spectrum hue sweep)
+for d in none ordered floyd; do
+  coolled image examples/generated/gallery/colorbar.source.png \
+    --fit fill --dither "$d" \
+    --preview "examples/generated/gallery/colorbar.$d.png"
+done
+```
+
+`--preview` renders locally and **skips BLE**; drop it (and add `--profile device_profile.local.json`) to play on hardware. Panel captures live in `examples/recordings/` — swap the placeholder tiles for your own recordings.
+</details>
+
+### Dithering: faking colours the panel doesn't have
+
+The panel is 1 bit per channel — 8 states total (black, red, green, blue, cyan, magenta, yellow, white). A full-spectrum bar has far more colours than that, so the codec either snaps each pixel to the nearest of the 8 (`--dither none`) or trades spatial detail for apparent colour with ordered or Floyd–Steinberg dithering:
+
+| Source hue sweep | `--dither none` | `--dither ordered` | `--dither floyd` |
+| :---: | :---: | :---: | :---: |
+| <img src="examples/generated/gallery/colorbar.source.png" width="240" alt="Full hue sweep, hundreds of colours"> | <img src="examples/generated/gallery/colorbar.none.png" width="240" alt="Hue sweep snapped to the 8-state gamut as hard bands"> | <img src="examples/generated/gallery/colorbar.ordered.png" width="240" alt="Hue sweep reproduced with ordered dithering"> | <img src="examples/generated/gallery/colorbar.floyd.png" width="240" alt="Hue sweep reproduced with Floyd–Steinberg dithering"> |
+
+`none` shows the panel's real gamut as hard bands; `ordered` and `floyd` checkerboard adjacent colours so the eye blends them into the in-between hues. Rule of thumb: **pixel art and logos → `none`** (crisp, already near the gamut); **photos, gradients, and busy animation → `ordered`** (no frame-to-frame shimmer) **or `floyd`** (best detail on a single still).
+
 ## Architecture
 
 Data flows one direction: rendering never touches Bluetooth, only the codec knows the wire format, and only the transport touches the radio.
@@ -65,6 +112,7 @@ coolled inspect '<address-or-id>' --width 64 --height 16 \
 coolled text "HELLO WORLD"                       # firmware-native scroll where available
 coolled image logo.png --auto-levels
 coolled animation clip.webp                      # aliases: anim, gif
+coolled animation clip.gif --scroll              # march the clip across the panel
 coolled text "HELLO WORLD" --preview hello.gif        # writes the preview; does not send
 
 # Controls
@@ -93,7 +141,7 @@ curl -X POST http://127.0.0.1:8124/text -H 'content-type: application/json' \
 | `control …` | `opensign-send control` | Send a control command (`brightness`, `power`, …) |
 | `serve` | `opensign-api` | Run the localhost API |
 
-Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal/--flip-vertical`, `--profile PATH`. Image/animation `--fit` uses standard object-fit names: `contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts its aspect ratio; the old name `stretch` remains an alias for `fill`. `image` adds colour controls (`--dither`, `--temporal N`, `--auto-levels`, `--black-level`, `--white-level`); `animation` adds `--key-color` / `--key-tolerance` to knock a bright background out to black. Image and animation bundles are cached by source contents, panel geometry, and rendering options; pass `--no-cache` to rebuild or `--cache-dir PATH` to choose the location. Run `coolled <command> --help` for the full list.
+Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal/--flip-vertical`, `--profile PATH`. Image/animation `--fit` uses standard object-fit names: `contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts its aspect ratio; the old name `stretch` remains an alias for `fill`. `image` adds colour controls (`--dither`, `--temporal N`, `--auto-levels`, `--black-level`, `--white-level`); `animation` adds `--key-color` / `--key-tolerance` to knock a bright background out to black, and `--scroll` (with `--scroll-px` / `--direction`) to march the clip across the panel as a sprite. Image and animation bundles are cached by source contents, panel geometry, and rendering options; pass `--no-cache` to rebuild or `--cache-dir PATH` to choose the location. Run `coolled <command> --help` for the full list.
 
 ### HTTP API
 
@@ -102,14 +150,14 @@ Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bu
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/status` | Per-panel state, scheduled jobs, optional diagnostics |
-| `POST` | `/text` | Render + play text (static, or a host-side scroll flipbook) |
+| `POST` | `/text` | Render + play text (device-native firmware scroll by default; `native=false` for the host flipbook, `scroll=false` for static) |
 | `POST` | `/image` | Fit + play an image (static, or a temporal-colour FRC loop via `temporal`) |
-| `POST` | `/animation` | Compile + play a bounded base64 GIF/APNG (subsampled to the frame buffer) |
+| `POST` | `/animation` | Compile + play a bounded base64 GIF/APNG (subsampled to the frame buffer); `scroll=true` marches it across the panel |
 | `POST` | `/bundle` (alias `/scene`) | Play a pre-rendered frame-bundle JSON |
 | `POST` | `/brightness` | Set brightness (0–100%) |
 | `POST` | `/power` | Turn the panel on/off |
 
-`/animation` and `/image` (`temporal`) compile server-side. The device-native firmware text scroll is CLI-only (`coolled text`); the API's `/text` uses the host-side scroll flipbook.
+`/animation` and `/image` (`temporal`) compile server-side. The API's `/text` now uses the device-native firmware scroll by default (matching `coolled text`); pass `native=false` for the host-side flipbook or `scroll=false` for a single static frame.
 
 ## Verified on hardware
 
@@ -127,7 +175,7 @@ Reference panel: **CoolLEDX, 64×16, 7-colour, firmware 6** (BLE MAC `ff:00:00:0
 | Scroll mode | `0x06` | **verified** | `mode=left` scrolled native banner (2026-07-14) |
 | Scroll speed | `0x07` | **verified** | Higher byte = faster; CLI `--speed 0..10` maps linearly to 0..255 |
 
-**Still open:** exercise the `0x06` checksum-error NAK re-send on real hardware (decoded and wired, but only `0x00` acks confirmed so far); route SDK/API `play_text(scroll=true)` through native scroll (the CLI already does); device-side asset/hash cache discovery, multi-panel fan-out, and API auth/rate-limiting.
+**Still open:** exercise the `0x06` checksum-error NAK re-send on real hardware (decoded and wired, but only `0x00` acks confirmed so far); device-side asset/hash cache discovery, multi-panel fan-out, and API auth/rate-limiting.
 
 ## Profiles & the evidence model
 
@@ -167,6 +215,7 @@ src/opensign/
 schema/                  JSON Schemas for the stable contracts
 scripts/                 Live hardware harness + one-shot experiments
 evidence/                Captures and provenance
+examples/                Source clips, generated previews (incl. the README gallery), panel recordings
 specs/                   Internal design specs (SMDL) — not needed to run anything
 protocol.md              Evidence ledger and promotion process
 ```
