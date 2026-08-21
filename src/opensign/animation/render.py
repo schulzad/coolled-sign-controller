@@ -150,6 +150,83 @@ def render_scroll_text(
     return frames
 
 
+def render_scroll_animation(
+    frames: list[Image.Image],
+    durations_ms: list[int],
+    width: int,
+    height: int,
+    *,
+    pixels_per_frame: int = 2,
+    step_ms: int = 50,
+    background: str = "black",
+    direction: str = "left",
+) -> tuple[list[Image.Image], list[int]]:
+    """Slide animated sprite ``frames`` across a panel-sized canvas (faked scroll).
+
+    The firmware can march a *single* static bitmap across itself (native text
+    scroll, opcode 0x02) but cannot advance an animation while it translates, so
+    a GIF that should both play and travel has to be pre-baked into a flipbook
+    here. Every ``frames`` entry (a sprite already scaled to the panel height,
+    transparency preserved) is pasted onto a fresh panel-sized ``background`` at
+    a horizontal offset that steps ``pixels_per_frame`` per output frame; the
+    sprite enters just off one edge and exits the other, so firmware looping
+    repeats a clean pass.
+
+    Which sprite frame is shown is chosen by elapsed wall-clock time against
+    ``durations_ms`` (``step_ms`` per output frame), so the sprite's own
+    animation cadence is preserved independent of how fast it scrolls. Returns
+    the panel frames and their per-frame durations (each ``step_ms``).
+    """
+    if not frames:
+        raise ValueError("frames cannot be empty")
+    if len(durations_ms) != len(frames):
+        raise ValueError("durations_ms must have one entry per frame")
+    if pixels_per_frame <= 0:
+        raise ValueError("pixels_per_frame must be positive")
+    if step_ms <= 0:
+        raise ValueError("step_ms must be positive")
+    if direction not in {"left", "right"}:
+        raise ValueError("direction must be 'left' or 'right'")
+
+    sprite_w, sprite_h = frames[0].size
+    y = (height - sprite_h) // 2
+    background_rgb = parse_color(background)
+
+    # Cumulative source timeline so a sprite frame can be picked by elapsed time,
+    # decoupling the run-cycle speed from the spatial scroll step.
+    cumulative: list[int] = []
+    running = 0
+    for duration in durations_ms:
+        running += max(1, duration)
+        cumulative.append(running)
+    total_ms = cumulative[-1]
+
+    def sprite_at(elapsed_ms: int) -> Image.Image:
+        moment = elapsed_ms % total_ms
+        for index, edge in enumerate(cumulative):
+            if moment < edge:
+                return frames[index]
+        return frames[-1]
+
+    if direction == "left":
+        positions = list(range(width, -sprite_w - 1, -pixels_per_frame))
+    else:
+        positions = list(range(-sprite_w, width + 1, pixels_per_frame))
+    if not positions:
+        positions = [0]
+
+    out_frames: list[Image.Image] = []
+    for step, x in enumerate(positions):
+        canvas = Image.new("RGB", (width, height), background_rgb)
+        sprite = sprite_at(step * step_ms)
+        if sprite.mode == "RGBA":
+            canvas.paste(sprite, (x, y), sprite)
+        else:
+            canvas.paste(sprite, (x, y))
+        out_frames.append(canvas)
+    return out_frames, [step_ms] * len(out_frames)
+
+
 def render_static_text(
     text: str,
     width: int = 48,
@@ -398,6 +475,36 @@ def knockout_color(
     ]
     out = Image.new("RGB", rgb.size)
     out.putdata(swapped)
+    return out
+
+
+def alpha_key(
+    image: Image.Image,
+    key: tuple[int, int, int],
+    *,
+    tolerance: int = 96,
+) -> Image.Image:
+    """Return an RGBA copy with pixels within ``tolerance`` of ``key`` made transparent.
+
+    Unlike :func:`knockout_color` (which paints matches black), this zeroes the
+    alpha channel so a scrolling sprite composited over the panel shows the panel
+    background through its keyed-out backdrop instead of dragging a black
+    rectangle across the display. Distance is Euclidean over the RGB cube
+    (0..441); existing transparency is preserved.
+    """
+    if tolerance < 0:
+        raise ValueError("tolerance must be >= 0")
+    rgba = image.convert("RGBA")
+    key_r, key_g, key_b = key
+    threshold = tolerance * tolerance
+    keyed = [
+        (r, g, b, 0)
+        if (r - key_r) ** 2 + (g - key_g) ** 2 + (b - key_b) ** 2 <= threshold
+        else (r, g, b, a)
+        for (r, g, b, a) in rgba.getdata()
+    ]
+    out = Image.new("RGBA", rgba.size)
+    out.putdata(keyed)
     return out
 
 

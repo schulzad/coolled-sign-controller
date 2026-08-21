@@ -7,6 +7,11 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from opensign.contracts import DeviceProfile, FrameBundle
+from opensign.protocol.codecs.coolledx import (
+    MODE_LEFT,
+    USER_SCROLL_SPEED_MAX,
+    USER_SCROLL_SPEED_MIN,
+)
 
 from .runtime import OpenSignRuntime
 
@@ -15,6 +20,11 @@ class TextRequest(BaseModel):
     panel_id: str = "desk-sign"
     text: str = Field(min_length=1, max_length=512)
     scroll: bool = True
+    # When scrolling, use the device's native firmware scroll (one wide banner)
+    # by default, matching the CLI; set native=false for the host-side flipbook.
+    native: bool = True
+    speed: int = Field(default=8, ge=USER_SCROLL_SPEED_MIN, le=USER_SCROLL_SPEED_MAX)
+    mode: int = Field(default=MODE_LEFT, ge=0, le=255)
     fps: float = Field(default=12.0, gt=0, le=60)
     foreground: str = "white"
     background: str = "black"
@@ -41,6 +51,13 @@ class AnimationRequest(BaseModel):
     fit_mode: str = Field(default="contain", pattern="^(contain|cover|stretch)$")
     background: str = "black"
     dither: str = Field(default="ordered", pattern="^(none|ordered|floyd)$")
+    key_color: str | None = None
+    key_tolerance: int = Field(default=96, ge=0, le=441)
+    # Scroll the clip across the panel as a sprite (mirrors `coolled animation
+    # --scroll`) instead of playing it in place.
+    scroll: bool = False
+    scroll_px: int = Field(default=2, ge=1, le=64)
+    direction: str = Field(default="left", pattern="^(left|right)$")
 
 
 class BrightnessRequest(BaseModel):
@@ -109,6 +126,15 @@ def create_app(
     @app.post("/text")
     async def text(request: TextRequest) -> dict[str, Any]:
         try:
+            if request.scroll and request.native:
+                return await runtime.play_native_text(
+                    request.panel_id,
+                    request.text,
+                    speed=request.speed,
+                    mode=request.mode,
+                    foreground=request.foreground,
+                    background=request.background,
+                )
             return await runtime.play_text(
                 request.panel_id,
                 request.text,
@@ -149,6 +175,11 @@ def create_app(
                 fit_mode=request.fit_mode,
                 background=request.background,
                 dither=request.dither,
+                key_color=request.key_color,
+                key_tolerance=request.key_tolerance,
+                scroll=request.scroll,
+                scroll_px=request.scroll_px,
+                direction=request.direction,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
