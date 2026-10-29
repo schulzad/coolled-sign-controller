@@ -27,7 +27,7 @@
       "file": "DeviceProfileLedger.smdl",
       "layer": "contracts",
       "source": "src/opensign/contracts.py (DeviceProfile), device_profile*.json",
-      "status": "governance; brightness + static image (0x03) verified; stored_animation (0x04) + native_text_scroll (0x02) experimental; streaming rejected; codec selection gated on allow_experimental (runtime admits experimental for live delivery, execute alone gates writes)",
+      "status": "governance; brightness, static image (0x03), and stored animation (0x04; 30 KiB payload limit = 79 frames at 64x16) verified; native text scroll (0x02) confirmed on hardware 2026-07-14 with mode 0x06 and speed 0x07 verified, its frame-transfer claim awaiting a ledger evidence entry before promotion; streaming rejected; codec selection gated on allow_experimental (runtime admits experimental for live delivery, execute alone gates writes)",
       "delegates_to": ["CoolLEDXDiscovery", "CoolLEDXProtocol", "GuardedTransport"],
       "summary": "Evidence-first profile lifecycle (unverified -> experimental -> verified | rejected), capped confidence, per-mode frame_transfer governance (static vs animation), palette derivation from color_mode (plus the measured flicker-fusion ceiling as a device fact and the perceived temporal-FRC gamut), and the status gate codec selection enforces."
     },
