@@ -168,7 +168,7 @@ Reference panel: **CoolLEDX, 64×16, 7-colour, firmware 6** (BLE MAC `ff:00:00:0
 | --- | --- | :---: | --- |
 | Brightness | `0x08` | **verified** | Brightness sweep visibly changed the panel (2026-07-13) |
 | Static image | `0x03` | **verified** | 4-chunk image acked per-chunk and displayed (2026-07-13) |
-| Stored animation | `0x04` | **verified** | Stored/looped a clip; pinned the 30 KiB / 80-frame buffer at 64×16 (2026-07-13) |
+| Stored animation | `0x04` | **verified** | Stored/looped a clip (2026-07-13); the payload limit is 30 KiB including the header, so 79 frames at 64×16 (80 is rejected, 2026-08-15) |
 | Native text scroll | `0x02` | **verified** | Wide bitmap scrolled by firmware; `coolled text --speed 0..10` (2026-07-14) |
 | Temporal colour (FRC) | via `0x04` | **observed** | Sub-frame loop reads as intermediate tones above the ~62 Hz fusion ceiling |
 | Per-chunk ack pacing | notify | **verified** | `acks_received=4/4` on a 4-chunk frame |

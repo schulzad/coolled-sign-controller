@@ -1,7 +1,7 @@
 Seedscript module description language 2.3
 
 Module("PixelFramePipeline") {
-  description: "Compile a scene, an animated source (text, static image, GIF/APNG), or a still expanded into a temporal (frame-rate-control) subframe loop into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, tone-remap with levels, resample the timeline onto the device's timing model, quantize to the panel's governed palette (or temporally dither a still), and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (an 80-frame 64x16 GIF displayed); temporal-colour stills confirmed the same day against the ~62 Hz flicker-fusion ceiling."
+  description: "Compile a scene, an animated source (text, static image, GIF/APNG), or a still expanded into a temporal (frame-rate-control) subframe loop into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, tone-remap with levels, resample the timeline onto the device's timing model, quantize to the panel's governed palette (or temporally dither a still), and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (multi-frame 64x16 GIFs displayed; the frame budget was pinned at 79 on 2026-08-15); temporal-colour stills confirmed the same day against the ~62 Hz flicker-fusion ceiling."
   metaphor: "A print shop's composing room: set the type, square the plate, and proof it against the original -- but never run the press."
   version: "2.3"
   tags: ['coolledx', 'rendering', 'compile', 'animation', 'layer:animation', 'transport-neutral', 'verified-hardware']
@@ -39,7 +39,7 @@ Module("PixelFramePipeline") {
           palette: { type: "array[rgb]", description: "Target display palette (from the profile color_mode).", required: true },
           dither_mode: { type: "string", description: "ordered | none | error_diffusion (default ordered for animation).", required: false, default: "ordered" },
           timeline_policy: { type: "string", description: "resample | strict.", required: false, default: "resample" },
-          max_frames: { type: "int", description: "Hard cap on frames; bounds memory and the codec budget. Defaults to the device frame-buffer budget from CoolLEDXProtocol -- 30 KiB / plane_bytes = 80 at 64x16 -- not a fixed 170; longer sources are evenly subsampled to it (holds folded so run time is preserved).", required: false, default: "device frame-buffer budget (80 at 64x16)" },
+          max_frames: { type: "int", description: "Hard cap on frames; bounds memory and the codec budget. Defaults to the device frame budget from CoolLEDXProtocol -- (30 KiB - 27-byte header) / plane_bytes = 79 at 64x16 -- not a fixed 170; longer sources are evenly subsampled to it (holds folded so run time is preserved).", required: false, default: "device frame budget (79 at 64x16)" },
           orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
         }
         actions: { decode: "decode_animated_source", fit: "fit_and_orient", resample: "resample_timeline", quantize: "quantize_frame", bundle: "build_frame_bundle", report: "compile_diagnostics" }
@@ -338,8 +338,8 @@ Module("PixelFramePipeline") {
           "Variable source timing is resampled onto the device single global speed or rejected in strict mode -- never silently dropped.",
           "Temporal (FRC) compilation expands a STILL into N>=2 binarized subframes: each subframe is palette-exact, but the PERCEIVED colour is inter-palette via duty-cycle time-averaging -- it is not a new single-frame colour.",
           "A temporal loop is timed above the panel's measured flicker-fusion ceiling (device fact, ~62 Hz): loop_period = N * speed_ms <= 1000 / fusion_hz, or the dither reads as visible flicker instead of a fused tone.",
-          "Temporal expansion is for stills only; it must carry no motion, and its subframe count still fits the codec's 30 KiB / 80-frame buffer.",
-          "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec's 30 KiB frame buffer (80 at 64x16) before hand-off.",
+          "Temporal expansion is for stills only; it must carry no motion, and its subframe count still fits the codec's 30 KiB payload limit (79 frames at 64x16).",
+          "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec's 30 KiB payload limit (79 at 64x16) before hand-off.",
           "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames.",
           "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService."
         ]
@@ -364,8 +364,9 @@ Module("PixelFramePipeline") {
       - Palette/color_mode, geometry, and the flicker-fusion ceiling (device fact) governance to DeviceProfileLedger.
     verified_on_hardware: |
       - Rendering side: 64x16 HELLO (2026-07-13) and COOL displayed via the runtime path.
-      - Animation compilation (decode/resample/quantize) confirmed 2026-07-13: an
-        80-frame 64x16 GIF displayed; the two-frame.gif scatter under dither=none was
+      - Animation compilation (decode/resample/quantize) confirmed 2026-07-13:
+        multi-frame 64x16 GIFs displayed (the frame budget was later pinned at 79,
+        2026-08-15); the two-frame.gif scatter under dither=none was
         traced to LANCZOS resample + hard threshold and fixed by none -> NEAREST fit.
       - Temporal colour (FRC) confirmed 2026-07-13: a still shown as an N-subframe loop
         reads as intermediate tones; the ~62 Hz fusion ceiling was measured by

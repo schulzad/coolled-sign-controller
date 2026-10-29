@@ -303,7 +303,7 @@ Module("DeviceProfileLedger") {
       - Physical delivery to GuardedTransport.
       - Consuming the fusion ceiling to time temporal loops to PixelFramePipeline.choose_fused_speed.
     verified_on_hardware: |
-      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) had its first live test 2026-07-13 (an 80-frame 64x16 clip displayed; 81 did not, pinning the 30 KiB frame buffer) -- promote to verified once that evidence entry is appended to the profile; frame_streaming rejected; power experimental; mode=left (0x06) and speed (0x07, higher=faster) verified 2026-07-14 via native scroll speed sweep.
+      - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) is verified (first displayed 2026-07-13; its 30 KiB payload limit was pinned 2026-08-15 with decoded acks: 79 frames at 64x16 accepted, 80 rejected with DATA_LENGTH_ERROR); frame_streaming rejected; power experimental; mode=left (0x06) and speed (0x07, higher=faster) verified 2026-07-14 via native scroll speed sweep.
       - native_text_scroll (0x02 wide banner + mode=left): scrolled on hardware 2026-07-14 (scripts/native_scroll_experiment.py) -- promote from experimental to verified once a live_hardware_test evidence entry is appended for the frame_transfer mode claim; speed/mode commands are already verified.
       - Flicker-fusion ceiling measured ~62 Hz on the reference panel (2026-07-13, scripts/flicker_probe.py), enabling temporal-colour (FRC) rendering.
     open_work: |

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Corrected the stale **80-frame** animation budget across the README, roadmap, validation notes, and specs. The `0x04` payload limit is 30 KiB *including* its 27-byte header, so a 64x16 panel tops out at **79 frames**; 80 is rejected with `DATA_LENGTH_ERROR` (measured 2026-08-15 with decoded acks). The July "80 displays, 81 fails" reading predated correct ack decoding.
 - Added a **feature board** spec (`specs/FeatureBoard.smdl`, registered in `specs/manifest.json`): design-only cards for a gap between scroll passes, a host-driven music-bars visualizer (opcode `0x01`, unverified), image/animation option parity, and compiling a multi-page program into a single `0x04` upload.
 - Licensed the project under **MIT** (`LICENSE`). `THIRD_PARTY_NOTICES.md` carries the MIT notice for the chunking and bitplane helpers adapted from coolledx-driver, and `pyproject.toml` declares `license = "MIT"` (PEP 639) so the notices ship with the package.
 - Added **side-scrolling animations**: a GIF/WebP/APNG can travel across the panel as a sprite (scaled to panel height, transparency preserved, own animation still playing) instead of playing in place. New `render_scroll_animation` + `alpha_key` in `animation.render`, `PixelAnimationStudio.create_scrolling_gif_bundle`, and `coolled animation --scroll [--scroll-px N] [--direction left|right]`. The scroll is faked host-side because native firmware scroll (opcode 0x02) can only march a single static bitmap; a full pass is thinned to the frame budget, so it obeys the ~79-frame / 30 KiB limit.

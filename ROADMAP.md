@@ -9,7 +9,7 @@ Reference panel: CoolLEDX, 64x16, 7-colour, firmware 6 (`ff:00:00:06:6f:82`).
 | Send one confirmed control command | Brightness (`0x08`) verified on hardware |
 | Render an oriented test pattern | Implemented (default geometry now 64x16) |
 | Send one static frame repeatably | Static image (`0x03`) verified on hardware |
-| Compile and play a simple animation | Stored animation (`0x04`) verified on hardware (30 KiB / 80-frame buffer) |
+| Compile and play a simple animation | Stored animation (`0x04`) verified on hardware (30 KiB payload limit: 79 frames at 64x16) |
 | Play at measured BLE throughput | Ack-paced delivery verified; throughput profiling pending |
 | Expose `/text`, `/image`, `/brightness`, `/status` | Implemented; API render-only until `--execute`. `/text` (native scroll or flipbook), `/image` (+temporal), and `/animation` (+side-scroll) all compile server-side |
 | Preserve evidence for unverified conclusions | Implemented (evidence ledger + provenance format) |

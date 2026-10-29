@@ -36,7 +36,7 @@
       "file": "CoolLEDXProtocol.smdl",
       "layer": "protocol/codec",
       "source": "src/opensign/protocol/codecs/coolledx.py",
-      "status": "hardware-verified (brightness 0x08, image 0x03, animation 0x04 -- 0x04 confirmed 2026-07-13, 30 KiB / 80-frame buffer; native text scroll 0x02 + mode 0x06 + speed 0x07 confirmed 2026-07-14, higher speed byte = faster)",
+      "status": "hardware-verified (brightness 0x08, image 0x03, animation 0x04 -- 0x04 confirmed 2026-07-13, 30 KiB payload limit = 79 frames at 64x16, re-measured 2026-08-15; native text scroll 0x02 + mode 0x06 + speed 0x07 confirmed 2026-07-14, higher speed byte = faster)",
       "delegates_to": ["GuardedTransport"],
       "summary": "Wire framing, control opcodes, bitplane packing, 128-byte checksummed chunks, native text-scroll banner (0x02 wide bitmap + 81-byte header, motion via mode 0x06 / speed 0x07), animation preflight (frame/payload budget + single global speed), an ack decoder, and the await-ack flow_control hint. Owns encoding, not writes."
     },
@@ -54,7 +54,7 @@
       "file": "PixelFramePipeline.smdl",
       "layer": "animation",
       "source": "src/opensign/animation (studio/preview)",
-      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (80-frame 64x16 GIF); temporal-colour (FRC) stills confirmed against the ~62 Hz fusion ceiling",
+      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (multi-frame 64x16 GIFs; budget pinned at 79 frames 2026-08-15); temporal-colour (FRC) stills confirmed against the ~62 Hz fusion ceiling",
       "delegates_to": ["DeviceProfileLedger"],
       "summary": "Scene, animated source, or a still expanded into a temporal (frame-rate-control) subframe loop -> RGB888 -> fit/orient -> levels -> timeline resample -> palette quantize (or temporal dither) -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
     },
@@ -107,7 +107,7 @@
       "id": "W4",
       "title": "Animation + scheduling",
       "modules": ["CoolLEDXProtocol", "PixelFramePipeline", "SignControlService"],
-      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are implemented (PixelAnimationStudio.create_gif_bundle + OpenSignRuntime.play_animation_base64 + the API /animation route), and as of 2026-07-13 animation displays on hardware (0x04) with the 30 KiB / 80-frame buffer enforced and dither=none paired with NEAREST; remaining: unify the compiler under the create_animation_bundle name, confirm multi-frame cadence/timing on hardware, and drive scheduler playlists."
+      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are implemented (PixelAnimationStudio.create_gif_bundle + OpenSignRuntime.play_animation_base64 + the API /animation route), and as of 2026-07-13 animation displays on hardware (0x04) with the 30 KiB / 79-frame payload limit enforced and dither=none paired with NEAREST; remaining: unify the compiler under the create_animation_bundle name, confirm multi-frame cadence/timing on hardware, and drive scheduler playlists."
     },
     {
       "id": "W5",
@@ -130,7 +130,7 @@
     "Rendering is transport-neutral; only the device codec knows the wire format; only the transport touches the radio.",
     "PixelFramePipeline compiles bundles only; SignControlService is the sole cross-module orchestrator (compile -> encode -> deliver).",
     "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device colour knowledge never leaks into compilation.",
-    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device frame buffer (80 frames at 64x16) plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated.",
+    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device payload limit, header included (79 frames at 64x16), plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated.",
     "The native single-frame palette and the temporal-FRC perceived gamut are distinct: temporal dithering time-averages native colours into a larger but luminance-limited perceived volume, never a new single-frame colour.",
     "The flicker-fusion ceiling is a measured, evidence-backed device fact; a temporal (FRC) loop must be timed above it (N * speed_ms <= 1000 / fusion_hz) or it reads as visible flicker instead of a fused tone."
   ]
