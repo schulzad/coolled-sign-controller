@@ -228,7 +228,7 @@ Module("CoolLEDXProtocol") {
       }
 
       Function("preflight_frame_bundle") {
-        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. The BINDING cap is the device frame buffer measured on hardware 2026-07-13: pixel-plane data must fit 30 KiB (PIXEL_BYTES_MAX = 30720 bytes), which at 64x16 (384 bytes/frame) is exactly 80 frames -- 80 displays, 81 uploads to 100% then shows nothing on the panel. Two structural caps also apply but are looser at this geometry: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535). Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected. The single global speed is the per-frame hold time in milliseconds (hardware-calibrated); a temporal-colour (frame-rate-control) still arrives as an ordinary multi-frame 0x04 bundle whose small ms/frame is chosen upstream to beat the panel's flicker-fusion ceiling -- the codec carries that speed unchanged and adds no new opcode."
+        description: "Assert a bundle fits the CoolLEDX frame encoding before packing, and map its cadence to the one device timing value. Per-frame plane bytes are 3 * width * (height/8). A single image packs 24 (reserved) + 2 (len) + planes; an animation packs 24 (reserved) + 1 (frame_count) + 2 (speed) + planes*N. The BINDING cap is the device payload limit, re-measured on hardware 2026-08-15 with decoded acks: the complete animation payload, its 27-byte header included, must fit 30 KiB (30720 bytes), so pixel-plane data gets PIXEL_BYTES_MAX = 30720 - 27 = 30693 bytes, which at 64x16 (384 bytes/frame) is 79 frames -- 79 frames (30363 B) are accepted 238/238, while 80 (30747 B) are rejected on the first packet with ack status 0x04 DATA_LENGTH_ERROR. Two structural caps also apply but are looser at this geometry: frame_count is a single byte (N <= 255) and the chunk header's total-length field is 16-bit (raw payload <= 65535). Over-budget bundles are rejected, not truncated. Per-frame durations are collapsed to a single global speed (variable timing must be resampled upstream by PixelFramePipeline); an unrepresentable cadence is rejected. The single global speed is the per-frame hold time in milliseconds (hardware-calibrated); a temporal-colour (frame-rate-control) still arrives as an ordinary multi-frame 0x04 bundle whose small ms/frame is chosen upstream to beat the panel's flicker-fusion ceiling -- the codec carries that speed unchanged and adds no new opcode."
         metaphor: "Weighing the pages before sealing them, refusing a book that will not fit the pouch."
         input_parameters: {
           frame_bundle: { type: "FrameBundle", description: "RGB888 frames at panel geometry.", required: true },
@@ -245,8 +245,8 @@ Module("CoolLEDXProtocol") {
           def preflight_frame_bundle(frame_bundle, width, height):
               plane_bytes = 3 * width * (height // 8)          # 384 at 64x16
               n = len(frame_bundle.frames)
-              PIXEL_BYTES_MAX = 30 * 1024                      # measured device frame buffer, 2026-07-13
-              max_by_buffer = PIXEL_BYTES_MAX // plane_bytes   # 80 at 64x16 -- BINDING cap
+              PIXEL_BYTES_MAX = 30 * 1024 - 27                 # 30 KiB payload limit minus the 27-byte header, 2026-08-15
+              max_by_buffer = PIXEL_BYTES_MAX // plane_bytes   # 79 at 64x16 -- BINDING cap
               max_by_count = 255                               # frame_count is one byte
               max_by_len = (65535 - 27) // plane_bytes         # 16-bit total-length field
               max_frames = min(max_by_buffer, max_by_count, max_by_len)
@@ -376,7 +376,7 @@ Module("CoolLEDXProtocol") {
           "Every wire packet is 0x01 || escape(len_be16 || payload) || 0x03.",
           "Reserved bytes 0x01/0x02/0x03 in payloads are always byte-stuffed via the 0x02 escape.",
           "Frame transfers are chunked at 128 data bytes with an XOR checksum per chunk.",
-          "Animation payloads are preflighted against the measured 30 KiB device frame buffer (binding cap: 80 frames at 64x16) plus the structural caps (frame_count <= 255; 16-bit total-length <= 65535 bytes); over-budget bundles are rejected, never truncated.",
+          "Animation payloads are preflighted against the measured 30 KiB device payload limit, header included (binding cap: 79 frames at 64x16), plus the structural caps (frame_count <= 255; 16-bit total-length <= 65535 bytes); over-budget bundles are rejected, never truncated.",
           "The device carries one global animation speed; per-frame timing is resampled upstream (PixelFramePipeline) and collapsed to a single speed here, or rejected.",
           "The single global speed is the per-frame hold time in milliseconds (hardware-calibrated); temporal-colour (FRC) stills are ordinary 0x04 bundles carried unchanged at a small ms/frame, and this module neither computes nor enforces the fusion ceiling -- that timing decision lives in PixelFramePipeline/DeviceProfileLedger.",
           "Input frames must already be quantized to the panel palette; packing is 1 bit per channel (8 wire color states) and does not itself dither -- temporal (FRC) stills arrive pre-binarized as one 0x04 loop.",
@@ -385,7 +385,7 @@ Module("CoolLEDXProtocol") {
           "Frame-transfer EncodedPayloads carry flow_control.await_ack=true; control payloads carry an empty flow_control.",
           "The codec supplies a per-chunk ack decoder (0x00 success / 0x06 checksum-error NAK) on frame-transfer EncodedPayloads; GuardedTransport uses it to confirm each chunk and re-send a NAKed packet. The 0x06 NAK path is unit-tested but not yet exercised on hardware.",
           "This module never performs BLE writes; delivery and the ack handshake belong to GuardedTransport.",
-          "Byte-for-byte encoding of brightness (0x08), image (0x03), and animation (0x04) is verified against real hardware -- 0x04 confirmed 2026-07-13: an 80-frame 64x16 clip displayed while 81 frames uploaded but did not, pinning the 30 KiB frame buffer."
+          "Byte-for-byte encoding of brightness (0x08), image (0x03), and animation (0x04) is verified against real hardware -- 0x04 first displayed 2026-07-13, and its 30 KiB payload limit was pinned 2026-08-15 with decoded acks: 79 frames at 64x16 accepted 238/238, 80 rejected with DATA_LENGTH_ERROR."
         ]
         tags: ["orchestrator", "verified-hardware"]
       }
@@ -410,10 +410,13 @@ Module("CoolLEDXProtocol") {
     verified_on_hardware: |
       - Brightness (0x08) visibly changed the panel.
       - 4-chunk 64x16 image (0x03) acked success per chunk and rendered.
-      - Animation (0x04) displayed on hardware 2026-07-13: an 80-frame 64x16 clip
-        rendered; 81 frames uploaded to 100% but showed nothing, pinning the device
-        frame buffer at 30 KiB (30720 B of pixel data). Now enforced in preflight
-        (PIXEL_BYTES_MAX) and used as the gif max-frames default.
+      - Animation (0x04) displayed on hardware 2026-07-13. Its payload limit was
+        re-measured 2026-08-15 with decoded acks: the complete payload, 27-byte
+        header included, must fit 30 KiB, so 79 frames at 64x16 (30363 B) were
+        accepted 238/238 and 80 (30747 B) were rejected on packet 0 with
+        DATA_LENGTH_ERROR; the earlier 80-displays / 81-fails reading predated
+        correct ack decoding. Now enforced in preflight (PIXEL_BYTES_MAX =
+        30720 - 27) and used as the animation max-frames default.
       - Native text scroll (0x02 wide banner + mode=left 0x06) scrolled on hardware
         2026-07-14 via scripts/native_scroll_experiment.py, confirming the firmware
         scrolls a single wide bitmap and that the image (0x03) and text (0x02) payloads

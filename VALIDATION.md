@@ -24,8 +24,10 @@ Verified against **CoolLEDX, 64x16, 7-colour, firmware 6** (BLE MAC
 - Read-only discovery: advertisement + manufacturer-data decode (64x16, 7-colour,
   fw6) and GATT enumeration (single `FFF0` service, one `FFF1` write/notify/read
   characteristic).
-- Brightness (`0x08`), static image (`0x03`), and stored animation (`0x04`, pinning
-  the 30 KiB / 80-frame buffer) displayed on hardware (2026-07-13).
+- Brightness (`0x08`), static image (`0x03`), and stored animation (`0x04`)
+  displayed on hardware (2026-07-13). The `0x04` payload limit was pinned
+  2026-08-15: 30 KiB including the 27-byte header, i.e. 79 frames at 64x16
+  (80 is rejected with `DATA_LENGTH_ERROR`).
 - Native text scroll (`0x02` wide banner) with mode (`0x06`) and speed (`0x07`,
   higher = faster) verified 2026-07-14.
 - Per-chunk ack pacing on `FFF1` (`acks_received=4/4` on a 4-chunk frame).

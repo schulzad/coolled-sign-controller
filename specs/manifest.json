@@ -9,7 +9,8 @@
     "protocol/codec  -> encode commands + emit pacing hints",
     "protocol/transport -> move bytes, honor pacing, gate execute",
     "animation       -> render scenes to transport-neutral frames",
-    "sdk/api         -> orchestrate panels, execute gate, tracing"
+    "sdk/api         -> orchestrate panels, execute gate, tracing",
+    "planning        -> feature board: designed-but-unbuilt cards (design-only)"
   ],
   "modules": [
     {
@@ -26,7 +27,7 @@
       "file": "DeviceProfileLedger.smdl",
       "layer": "contracts",
       "source": "src/opensign/contracts.py (DeviceProfile), device_profile*.json",
-      "status": "governance; brightness + static image (0x03) verified; stored_animation (0x04) + native_text_scroll (0x02) experimental; streaming rejected; codec selection gated on allow_experimental (runtime admits experimental for live delivery, execute alone gates writes)",
+      "status": "governance; brightness, static image (0x03), and stored animation (0x04; 30 KiB payload limit = 79 frames at 64x16) verified; native text scroll (0x02) confirmed on hardware 2026-07-14 with mode 0x06 and speed 0x07 verified, its frame-transfer claim awaiting a ledger evidence entry before promotion; streaming rejected; codec selection gated on allow_experimental (runtime admits experimental for live delivery, execute alone gates writes)",
       "delegates_to": ["CoolLEDXDiscovery", "CoolLEDXProtocol", "GuardedTransport"],
       "summary": "Evidence-first profile lifecycle (unverified -> experimental -> verified | rejected), capped confidence, per-mode frame_transfer governance (static vs animation), palette derivation from color_mode (plus the measured flicker-fusion ceiling as a device fact and the perceived temporal-FRC gamut), and the status gate codec selection enforces."
     },
@@ -35,7 +36,7 @@
       "file": "CoolLEDXProtocol.smdl",
       "layer": "protocol/codec",
       "source": "src/opensign/protocol/codecs/coolledx.py",
-      "status": "hardware-verified (brightness 0x08, image 0x03, animation 0x04 -- 0x04 confirmed 2026-07-13, 30 KiB / 80-frame buffer; native text scroll 0x02 + mode 0x06 + speed 0x07 confirmed 2026-07-14, higher speed byte = faster)",
+      "status": "hardware-verified (brightness 0x08, image 0x03, animation 0x04 -- 0x04 confirmed 2026-07-13, 30 KiB payload limit = 79 frames at 64x16, re-measured 2026-08-15; native text scroll 0x02 + mode 0x06 + speed 0x07 confirmed 2026-07-14, higher speed byte = faster)",
       "delegates_to": ["GuardedTransport"],
       "summary": "Wire framing, control opcodes, bitplane packing, 128-byte checksummed chunks, native text-scroll banner (0x02 wide bitmap + 81-byte header, motion via mode 0x06 / speed 0x07), animation preflight (frame/payload budget + single global speed), an ack decoder, and the await-ack flow_control hint. Owns encoding, not writes."
     },
@@ -53,7 +54,7 @@
       "file": "PixelFramePipeline.smdl",
       "layer": "animation",
       "source": "src/opensign/animation (studio/preview)",
-      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (80-frame 64x16 GIF); temporal-colour (FRC) stills confirmed against the ~62 Hz fusion ceiling",
+      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (multi-frame 64x16 GIFs; budget pinned at 79 frames 2026-08-15); temporal-colour (FRC) stills confirmed against the ~62 Hz fusion ceiling",
       "delegates_to": ["DeviceProfileLedger"],
       "summary": "Scene, animated source, or a still expanded into a temporal (frame-rate-control) subframe loop -> RGB888 -> fit/orient -> levels -> timeline resample -> palette quantize (or temporal dither) -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
     },
@@ -65,6 +66,15 @@
       "status": "hardware-verified via runtime path",
       "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "GuardedTransport", "DeviceProfileLedger"],
       "summary": "Sole cross-module orchestrator: panel registry, global execute gate + per-call override, bounded animated-media ingest, temporal-colour image option, three-truths recording (host/ack/display), tracing, artifacts, and the FastAPI endpoints (/status, /text, /image [static|temporal], /animation, /bundle, /brightness, /power)."
+    },
+    {
+      "module": "FeatureBoard",
+      "file": "FeatureBoard.smdl",
+      "layer": "planning",
+      "source": "none yet -- design-only backlog; cards graduate into their owning layer spec when built",
+      "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4)",
+      "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService", "DeviceProfileLedger", "GuardedTransport"],
+      "summary": "Feature backlog: each card names its entry point, the Functions it needs, its owning layer module, its cost against the measured 30,720-byte / 79-frame 0x04 budget, and its acceptance criteria. Governed by FeatureBoardKernel; nothing here touches the radio."
     }
   ],
   "data_flow": [
@@ -97,7 +107,7 @@
       "id": "W4",
       "title": "Animation + scheduling",
       "modules": ["CoolLEDXProtocol", "PixelFramePipeline", "SignControlService"],
-      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are implemented (PixelAnimationStudio.create_gif_bundle + OpenSignRuntime.play_animation_base64 + the API /animation route), and as of 2026-07-13 animation displays on hardware (0x04) with the 30 KiB / 80-frame buffer enforced and dither=none paired with NEAREST; remaining: unify the compiler under the create_animation_bundle name, confirm multi-frame cadence/timing on hardware, and drive scheduler playlists."
+      "outcome": "Compile pipeline (bounded decode / timeline resample / ordered dither / preflight) and a bounded /play_animation entry are implemented (PixelAnimationStudio.create_gif_bundle + OpenSignRuntime.play_animation_base64 + the API /animation route), and as of 2026-07-13 animation displays on hardware (0x04) with the 30 KiB / 79-frame payload limit enforced and dither=none paired with NEAREST; remaining: unify the compiler under the create_animation_bundle name, confirm multi-frame cadence/timing on hardware, and drive scheduler playlists."
     },
     {
       "id": "W5",
@@ -120,7 +130,7 @@
     "Rendering is transport-neutral; only the device codec knows the wire format; only the transport touches the radio.",
     "PixelFramePipeline compiles bundles only; SignControlService is the sole cross-module orchestrator (compile -> encode -> deliver).",
     "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device colour knowledge never leaks into compilation.",
-    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device frame buffer (80 frames at 64x16) plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated.",
+    "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device payload limit, header included (79 frames at 64x16), plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated.",
     "The native single-frame palette and the temporal-FRC perceived gamut are distinct: temporal dithering time-averages native colours into a larger but luminance-limited perceived volume, never a new single-frame colour.",
     "The flicker-fusion ceiling is a measured, evidence-backed device fact; a temporal (FRC) loop must be timed above it (N * speed_ms <= 1000 / fusion_hz) or it reads as visible flicker instead of a fused tone."
   ]

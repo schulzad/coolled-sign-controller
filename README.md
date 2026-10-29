@@ -6,6 +6,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#status)
+[![License: MIT](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 [![Codec](https://img.shields.io/badge/codec-hardware--verified-brightgreen)](#verified-on-hardware)
 
 <img src="examples/generated/live-frame.png" alt="HELLO rendered on a 64x16 panel" width="640">
@@ -18,13 +19,13 @@ The design rule is **evidence before claims**: there are no hardcoded UUIDs, com
 
 ## Gallery
 
-The middle column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-colour, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right will show.
+Each row runs one source through the codec so you can compare it three ways: the **original artwork**, OpenSign's **64×16 render**, and the **same frames on the panel**. The render column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-colour, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right will show.
 
-| Source | OpenSign render → panel | On the panel |
-| :---: | :---: | :---: |
-| **Nyan cat**<br><sub>`nian.gif` · 12 frames · `--dither none`</sub> | <img src="examples/generated/gallery/nian.preview.gif" width="380" alt="Nyan cat compiled for a 64×16 panel"> | <img src="examples/recordings/nian.recording.png" width="380" alt="Nyan cat on the panel — recording coming soon"> |
-| **Sonic**<br><sub>`sonic-the-hedgehog.gif` · 4 frames · `--dither none`</sub> | <img src="examples/generated/gallery/sonic-the-hedgehog.preview.gif" width="380" alt="Sonic compiled for a 64×16 panel"> | <img src="examples/recordings/sonic-the-hedgehog.recording.png" width="380" alt="Sonic on the panel — recording coming soon"> |
-| **Matrix still**<br><sub>`matrix_still.png` · still · `--dither ordered`</sub> | <img src="examples/generated/gallery/matrix-still.png" width="380" alt="Matrix silhouette rendered for a 64×16 panel, channels overlapping into yellow and white"> | <img src="examples/recordings/matrix-still.recording.png" width="380" alt="Matrix still on the panel — recording coming soon"> |
+| Example | Source | OpenSign render → panel | On the panel |
+| :---: | :---: | :---: | :---: |
+| **Nyan cat**<br><sub>`nian.gif` · 12 frames · `--dither none`</sub> | <img src="examples/downloaded/nian.gif" width="240" alt="Original Nyan cat GIF before rendering"> | <img src="examples/generated/gallery/nian.preview.gif" width="240" alt="Nyan cat compiled for a 64×16 panel"> | <img src="examples/recordings/nian.recording.png" width="240" alt="Nyan cat on the panel — recording coming soon"> |
+| **Sonic**<br><sub>`sonic-the-hedgehog.gif` · 4 frames · `--dither none`</sub> | <img src="examples/downloaded/sonic-the-hedgehog.gif" width="240" alt="Original Sonic GIF before rendering"> | <img src="examples/generated/gallery/sonic-the-hedgehog.preview.gif" width="240" alt="Sonic compiled for a 64×16 panel"> | <img src="examples/recordings/sonic-the-hedgehog.recording.png" width="240" alt="Sonic on the panel — recording coming soon"> |
+| **Matrix still**<br><sub>`matrix_still.png` · still · `--dither ordered`</sub> | <img src="examples/generated/matrix_still.png" width="240" alt="Original Matrix still image before rendering"> | <img src="examples/generated/gallery/matrix-still.png" width="240" alt="Matrix silhouette rendered for a 64×16 panel, channels overlapping into yellow and white"> | <img src="examples/recordings/matrix-still.recording.png" width="240" alt="Matrix still on the panel — recording coming soon"> |
 
 <details>
 <summary>Reproduce the renders</summary>
@@ -167,7 +168,7 @@ Reference panel: **CoolLEDX, 64×16, 7-colour, firmware 6** (BLE MAC `ff:00:00:0
 | --- | --- | :---: | --- |
 | Brightness | `0x08` | **verified** | Brightness sweep visibly changed the panel (2026-07-13) |
 | Static image | `0x03` | **verified** | 4-chunk image acked per-chunk and displayed (2026-07-13) |
-| Stored animation | `0x04` | **verified** | Stored/looped a clip; pinned the 30 KiB / 80-frame buffer at 64×16 (2026-07-13) |
+| Stored animation | `0x04` | **verified** | Stored/looped a clip (2026-07-13); the payload limit is 30 KiB including the header, so 79 frames at 64×16 (80 is rejected, 2026-08-15) |
 | Native text scroll | `0x02` | **verified** | Wide bitmap scrolled by firmware; `coolled text --speed 0..10` (2026-07-14) |
 | Temporal colour (FRC) | via `0x04` | **observed** | Sub-frame loop reads as intermediate tones above the ~62 Hz fusion ceiling |
 | Per-chunk ack pacing | notify | **verified** | `acks_received=4/4` on a 4-chunk frame |
@@ -222,4 +223,4 @@ protocol.md              Evidence ledger and promotion process
 
 ## Status
 
-Alpha: the discover → render → encode → deliver path is verified end-to-end on the reference panel, but this is a research-grade tool for a reverse-engineered protocol, not a polished product. No license file is included yet — treat the code as all-rights-reserved until one is added.
+Alpha: the discover → render → encode → deliver path is verified end-to-end on the reference panel, but this is a research-grade tool for a reverse-engineered protocol, not a polished product. Released under the [MIT License](LICENSE); parts of the CoolLEDX codec are adapted from [coolledx-driver](https://github.com/UpDryTwist/coolledx-driver) (also MIT), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
