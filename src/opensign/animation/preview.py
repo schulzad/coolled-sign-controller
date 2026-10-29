@@ -77,6 +77,44 @@ def terminal_preview(image: Image.Image) -> str:
     return "\n".join(lines)
 
 
+# One character per panel colour (1 bit per channel), keyed by (red, green, blue) on/off.
+TEXT_LEGEND: dict[tuple[bool, bool, bool], str] = {
+    (False, False, False): ".",
+    (True, False, False): "R",
+    (False, True, False): "G",
+    (False, False, True): "B",
+    (False, True, True): "C",
+    (True, False, True): "M",
+    (True, True, False): "Y",
+    (True, True, True): "W",
+}
+TEXT_STYLES = ("auto", "color", "mono")
+
+
+def text_preview(image: Image.Image, *, style: str = "auto") -> str:
+    """Render a frame as plain text, one character per pixel.
+
+    Each pixel snaps to the panel's 8 colours with the codec's ``>127``
+    threshold, so the grid shows what the panel would light. ``color`` writes
+    the colour letter (TEXT_LEGEND); ``mono`` writes ``#`` for any lit pixel;
+    ``auto`` picks ``mono`` when the frame lights at most one colour, which
+    keeps text legible, and ``color`` otherwise.
+    """
+    if style not in TEXT_STYLES:
+        raise ValueError(f"style must be one of {', '.join(TEXT_STYLES)}")
+    image = image.convert("RGB")
+    raw = image.tobytes()
+    keys = [(raw[i] > 127, raw[i + 1] > 127, raw[i + 2] > 127) for i in range(0, len(raw), 3)]
+    if style == "auto":
+        lit = {key for key in keys if any(key)}
+        style = "mono" if len(lit) <= 1 else "color"
+    chars = [
+        ("#" if any(key) else ".") if style == "mono" else TEXT_LEGEND[key] for key in keys
+    ]
+    width = image.width
+    return "\n".join("".join(chars[y * width : (y + 1) * width]) for y in range(image.height))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="opensign-preview",

@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[api,dev]'
+      - run: python -m pip install -e '.[api,mcp,dev]'
       - run: ruff check .
 
   test:
@@ -27,5 +27,5 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[api,dev]'
+      - run: python -m pip install -e '.[api,mcp,dev]'
       - run: python -m pytest

@@ -33,6 +33,9 @@ api = [
   "fastapi>=0.139.0,<0.140",
   "uvicorn[standard]>=0.51.0,<0.52",
 ]
+mcp = [
+  "mcp>=1.10,<2",
+]
 dev = [
   "pytest>=9.0,<10.0",
   "ruff>=0.12,<1.0",
@@ -45,6 +48,7 @@ opensign-scan = "opensign.hardware_probe.cli:main"
 opensign-preview = "opensign.animation.preview:main"
 opensign-send = "opensign.protocol.cli:main"
 opensign-api = "opensign.sdk.api_cli:main"
+opensign-verbs = "opensign.sdk.verbs_mcp:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
