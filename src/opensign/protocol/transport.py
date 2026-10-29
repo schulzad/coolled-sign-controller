@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -13,6 +14,10 @@ from .packet import Chunk, chunk_packets
 
 class TransportError(RuntimeError):
     """Raised when BLE transport cannot complete a guarded operation."""
+
+
+# Called as progress(delivered, total), counted in packets, while a transfer advances.
+ProgressCallback = Callable[[int, int], None]
 
 
 def _now() -> str:
@@ -57,6 +62,7 @@ class TransferResult:
     errors: list[str] = field(default_factory=list)
     started_at: str = field(default_factory=_now)
     completed_at: str | None = None
+    duration_ms: float | None = None
     chunk_size: int | None = None
     chunk_size_source: str | None = None
     display_verification: str = "not_observed"
@@ -82,6 +88,7 @@ class TransferResult:
             "errors": list(self.errors),
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "duration_ms": self.duration_ms,
             "chunk_size": self.chunk_size,
             "chunk_size_source": self.chunk_size_source,
             "display_verification": self.display_verification,
@@ -119,7 +126,9 @@ class DryRunTransport:
         nak_retry_limit: int = 2,
         write_timeout: float = 5.0,
         max_consecutive_ack_timeouts: int = 6,
+        progress: ProgressCallback | None = None,
     ) -> TransferResult:
+        """Plan the transfer without writing; nothing is delivered, so ``progress`` is never called."""
         packet_list = [bytes(packet) for packet in packets]
         chunk_size, source = conservative_chunk_size(self.profile)
         delay = float(self.profile.connection.get("inter_chunk_delay_ms", 0))
@@ -269,6 +278,7 @@ class BleakTransport:
         nak_retry_limit: int = 2,
         write_timeout: float = 5.0,
         max_consecutive_ack_timeouts: int = 6,
+        progress: ProgressCallback | None = None,
     ) -> TransferResult:
         if retry_limit < 0:
             raise ValueError("retry_limit cannot be negative")
@@ -286,6 +296,7 @@ class BleakTransport:
             chunks_by_packet.setdefault(chunk.packet_index, []).append(chunk)
         pace_acks = await_ack and self.notify_subscribed
         notify_start = len(self.notifications)
+        started = time.monotonic()
         result = TransferResult(
             success=False,
             dry_run=False,
@@ -335,6 +346,8 @@ class BleakTransport:
         paced = pace_acks
         consecutive_ack_timeouts = 0
         try:
+            if progress is not None:
+                progress(0, len(packet_list))
             for packet_index in range(len(packet_list)):
                 packet_chunks = chunks_by_packet.get(packet_index, [])
                 # A decoded checksum-error (NAK) re-sends the whole packet up to
@@ -383,8 +396,11 @@ class BleakTransport:
                     elif ack["is_success"] or ack["status"] is None:
                         result.acks_received += 1
                     break
+                if progress is not None:
+                    progress(packet_index + 1, len(packet_list))
             result.success = not result.errors
             return result
         finally:
             result.notifications = list(self.notifications[notify_start:])
             result.completed_at = _now()
+            result.duration_ms = round((time.monotonic() - started) * 1000, 1)

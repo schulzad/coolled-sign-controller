@@ -63,6 +63,18 @@ Module("FeatureBoard") {
         kernel: "FeatureBoardKernel"
         tags: ["card:F4", "status:proposed", "extends:W4"]
       }
+
+      Directive("/pipelined_upload") {
+        description: "Card F5. Opt-in ack window for uploads: keep up to N chunks in flight instead of waiting for each chunk's ack before sending the next. Window 1 is today's stop-and-wait and stays the default until a hardware test earns a wider one."
+        metaphor: "Handing the next board up the ladder before the last one is nailed down."
+        parameters: {
+          window: { type: "int", description: "Chunks allowed in flight before waiting for the oldest ack.", required: false, default: 1 },
+          execute: { type: "bool", description: "Write to the panel instead of producing a plan.", required: false, default: false }
+        }
+        actions: { probe: "probe_ack_window", send: "send_windowed" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F5", "status:proposed", "needs-hardware-evidence"]
+      }
     }
 
     Bloom {
@@ -288,6 +300,45 @@ Module("FeatureBoard") {
               return the groups, each stamped with speed_ms
         tags: ["budget"]
       }
+
+      Function("send_windowed") {
+        description: "Send up to window chunks ahead of the oldest unacknowledged one and consume acks in order. A non-zero ack status inside the window stops the transfer exactly as it does under stop-and-wait; window 1 reproduces today's transfer."
+        metaphor: "Keeping a few boards on the ladder at once, but stopping the moment one is refused."
+        input_parameters: {
+          packets: { type: "array[bytes]", description: "Framed chunks in order.", required: true },
+          window: { type: "int", description: "Chunks allowed in flight.", required: false, default: 1 }
+        }
+        output_format: {
+          transfer: "TransferResult — the transfer with per-chunk ack telemetry."
+        }
+        implementation: |
+          def send_windowed(packets, window):
+              while chunks remain or acks are outstanding:
+                  write chunks until window of them are in flight
+                  wait for the oldest outstanding ack
+                  if its status is not 0x00: stop and report the rejected chunk
+              return the transfer
+        tags: ["transport", "needs-hardware-evidence"]
+      }
+
+      Function("probe_ack_window") {
+        description: "Hardware experiment: upload one payload at windows 1 to 4 and record seconds per chunk and the first non-zero ack status at each. The widest window with zero errors and a real speed-up becomes the evidence for changing the default."
+        metaphor: "Testing how many boards the ladder holds before anyone climbs it for real."
+        input_parameters: {
+          payload: { type: "array[bytes]", description: "One framed upload, re-sent at each window.", required: true },
+          windows: { type: "array[int]", description: "Windows to try.", required: false, default: [1, 2, 3, 4] }
+        }
+        output_format: {
+          rows: "list[object] One row per window: seconds per chunk, errors, and the first failing status."
+        }
+        implementation: |
+          def probe_ack_window(payload, windows):
+              for each window in windows:
+                  transfer = send_windowed(payload, window)
+                  record seconds per chunk and the first non-zero status
+              return the recorded rows
+        tags: ["experiment", "hardware", "needs-hardware-evidence"]
+      }
     }
 
     Sprout {
@@ -335,20 +386,31 @@ Module("FeatureBoard") {
         ]
         tags: ["pipe", "budget"]
       }
+
+      Chain("PipelinedUploadFlow") {
+        description: "Measure the window on hardware first, then send with the measured window."
+        metaphor: "Load-test the ladder, then climb."
+        links: [
+          { source: "/pipelined_upload", target: "probe_ack_window", description: "Try windows 1 to 4 on one payload." },
+          { source: "probe_ack_window", target: "send_windowed", description: "The widest clean, faster window becomes the default." }
+        ]
+        tags: ["pipe", "experiment"]
+      }
     }
 
     Kernels {
       Kernel("FeatureBoardKernel") {
         description: "Governs the board: keeps every card design-only until it graduates into its owning layer spec, and holds each card to the device facts it must respect."
         metaphor: "The shop foreman who checks the outline before any tool goes on the wall."
-        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow']
+        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow']
         invariants: [
           "DESIGN ONLY: No card on this board is built. A card graduates by moving its Functions into its owning layer module's spec when the code lands, and leaves the board.",
           "BUDGET FIRST: Every frame a card adds (gap frames, repeated program pages) counts against the measured 30,720-byte 0x04 payload ceiling, 79 frames at 64x16 after the 27-byte header, and is planned before rendering, never truncated after.",
           "UNVERIFIED STAYS DRY: A card that relies on an unverified opcode (0x01 music bars) ships dry-run-first, and needs live-hardware evidence recorded in DeviceProfileLedger before it may write by default.",
           "NOT STREAMING: Music bars are a small dedicated host-pushed command, not general frame streaming, which stays rejected; no card reopens frame_streaming.",
           "ONE GLOBAL SPEED: Per-page or per-gap timing on a 0x04 upload is expressed by repeating frames against one ms-per-frame speed, never by assuming per-frame durations the device does not store.",
-          "PANEL-ONLY COLOUR: Temporal (FRC) colour exists only on the physical panel, so no card validates it from a preview."
+          "PANEL-ONLY COLOUR: Temporal (FRC) colour exists only on the physical panel, so no card validates it from a preview.",
+          "STOP-AND-WAIT BY DEFAULT: The transport sends the next chunk only after the previous chunk's ack until a recorded hardware test shows the panel accepts a wider window, and a non-zero ack status inside any window stops the transfer."
         ]
         tags: ["governance", "design-only"]
       }
@@ -364,6 +426,7 @@ Module("FeatureBoard") {
       - F1 and F3 to PixelFramePipeline and the coolled CLI.
       - F2 to CoolLEDXProtocol (the 0x01 encoder) and SignControlService (the live loop), with promotion through DeviceProfileLedger.
       - F4 to SignControlService and PixelFramePipeline, preflighted by CoolLEDXProtocol.
+      - F5 to GuardedTransport (the ack window), with the measured window recorded through DeviceProfileLedger.
       - All wire encoding and every BLE write to CoolLEDXProtocol and GuardedTransport; nothing on this board touches the radio.
     cards: |
       F1 Scroll gap -- status: ready.
@@ -387,15 +450,23 @@ Module("FeatureBoard") {
         Cost: up to 79 frames per upload at 64x16. Ten pages at a uniform 3 s cost 10 frames at speed 3000; holds of 2 s and 3 s cost 2 + 3 frames at speed 1000.
         Limits: one global speed per upload, at most 65,535 ms per frame; mixing smooth host-side scroll with long holds is expensive (a 2 s hold at 50 ms per frame is 40 frames); an over-budget program splits at page boundaries, and those splits still need timed switching.
         Accept: the plan reports frames and payload bytes before any write and never splits inside a page.
+      F5 Pipelined chunk upload -- status: proposed, needs hardware evidence.
+        Why: nearly all of an upload is waiting on per-chunk acks (238 chunks take about 51 s for a 79-frame clip). The 8 ms write gap already hides inside that wait, so the only host-side speed-up is not waiting for every ack.
+        Lead: the first ~30 chunks ack in about 153 ms before the link settles to about 220 ms, and single acks still land in ~118 ms throughout, which suggests part of each wait is the Bluetooth connection interval rather than the panel; a central that can request faster link parameters (Linux, an ESP32) may shorten it without any window.
+        Shape: an opt-in ack window that keeps up to N chunks in flight and consumes acks in order; N=1 is today's stop-and-wait.
+        Risk: the panel may take only one chunk at a time (it likely commits each chunk to storage; uploaded text survives power loss on an identical panel), in which case a wider window draws 0x05 data-ID rejections. The best case is probably about 2x, bounded by the panel's own per-chunk time.
+        Accept: probe_ack_window records seconds per chunk and the first non-zero status at windows 1 to 4; the default only changes after a window shows a speed-up with zero errors on hardware, recorded in DeviceProfileLedger.
     evidence_basis: |
       - The 0x04 speed field is a per-frame hold in milliseconds (speed sweep 64 / 512 / 2000 on the reference panel, 2026-07-13).
       - The 0x04 payload ceiling is 30,720 B including the 27-byte header: 79 frames at 64x16 were accepted with 238/238 success acks, and 80 frames were rejected on packet 0 with status 0x04 DATA_LENGTH_ERROR (2026-08-15).
       - Temporal (FRC) colour only exists on the panel; previews show the binarized subframes.
+      - Per-chunk acks average 153 ms over the first 30 chunks of an upload, then 215 to 245 ms for the rest, with single acks still as fast as ~118 ms throughout (238 chunks in 51.1 s, 215 ms mean, 2026-10-29).
     open_questions: |
       - Does the same 30,720-byte ceiling govern 0x02 banners? An independent 64x16 CoolLEDX controller publicly reports 0x02 uploads of 30,695 B succeeding, which fits.
       - What push rate does the panel tolerate for 0x01 before it drops or queues packets?
       - Does a 0x04 upload show the same progress indicator as 0x02, and does it survive power loss the way 0x02 content does?
+      - How many chunks can the panel buffer in flight before it rejects one with 0x05?
     provenance: |
-      - F1 and F2 came out of the side-scroll review (2026-09-05). F3 was deferred until the scroll work merged (PR #2). F4 is motivated by multi-page controllers that re-upload per page, such as RavestickBoard (github.com/du13500/RavestickBoard-for-CoolLED1248).
+      - F1 and F2 came out of the side-scroll review (2026-09-05). F3 was deferred until the scroll work merged (PR #2). F4 is motivated by multi-page controllers that re-upload per page, such as RavestickBoard (github.com/du13500/RavestickBoard-for-CoolLED1248). F5 came out of the upload-time review (2026-10-29).
   }
 }

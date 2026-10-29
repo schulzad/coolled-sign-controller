@@ -6,7 +6,7 @@ from opensign.contracts import DeviceProfile, FrameBundle
 
 from .codec import CodecError, EncodedPayload, select_codec
 from .codecs.coolledx import MODE_LEFT, map_user_scroll_speed
-from .transport import BleakTransport, DryRunTransport, TransferResult
+from .transport import BleakTransport, DryRunTransport, ProgressCallback, TransferResult
 
 
 class ProtocolRuntime:
@@ -22,6 +22,7 @@ class ProtocolRuntime:
         execute: bool,
         retry_limit: int,
         timeout_seconds: float,
+        progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         transport = (
             BleakTransport(self.profile, timeout_seconds=timeout_seconds)
@@ -38,6 +39,7 @@ class ProtocolRuntime:
                 await_ack=await_ack,
                 ack_timeout=ack_timeout,
                 ack_decoder=encoded.ack_decoder,
+                progress=progress,
             )
         finally:
             if isinstance(transport, BleakTransport):
@@ -77,6 +79,7 @@ class ProtocolRuntime:
         execute: bool = False,
         retry_limit: int = 3,
         timeout_seconds: float = 15.0,
+        progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         # See send_control: transmitting does not require verified status.
         codec = select_codec(self.profile, allow_experimental=True)
@@ -86,6 +89,7 @@ class ProtocolRuntime:
             execute=execute,
             retry_limit=retry_limit,
             timeout_seconds=timeout_seconds,
+            progress=progress,
         )
 
     async def play_native_text(
@@ -99,6 +103,7 @@ class ProtocolRuntime:
         execute: bool = False,
         retry_limit: int = 3,
         timeout_seconds: float = 15.0,
+        progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Upload a wide text banner and start firmware scroll on one BLE session.
 
@@ -131,6 +136,7 @@ class ProtocolRuntime:
                 await_ack=bool(banner_fc.get("await_ack", False)),
                 ack_timeout=float(banner_fc.get("ack_timeout", 2.0)),
                 ack_decoder=banner.ack_decoder,
+                progress=progress,
             )
             transfers.append({"step": "banner", "transfer": _transfer_dict(banner_xfer)})
 

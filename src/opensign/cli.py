@@ -4,7 +4,8 @@ A thin umbrella over the focused entry points. Discovery, preview, and service
 commands delegate to their existing CLIs; ``text``/``image``/``animation`` are
 one-shot render-and-send helpers built on the animation studio and the protocol
 runtime. These send to the panel by default; pass ``--dry-run`` to build the
-transfer plan (and any preview/bundle) without touching Bluetooth.
+transfer plan (and any preview/bundle) without touching Bluetooth, and ``-v`` to
+print the full plan/result JSON.
 """
 
 from __future__ import annotations
@@ -13,14 +14,16 @@ import argparse
 import asyncio
 import importlib
 import json
+import math
 import sys
+import time
 from collections import Counter
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import opensign.protocol  # noqa: F401  (registers bundled device codecs)
-from opensign.animation.cache import RenderBundleCache
+from opensign.animation.cache import RenderBundleCache, default_render_cache_dir
 from opensign.animation.preview import save_preview
 from opensign.animation.render import render_wide_text
 from opensign.animation.studio import PixelAnimationStudio
@@ -100,7 +103,13 @@ def _add_common_send_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Build the transfer plan (and preview/bundle) without any BLE writes.",
+        help="Build the transfer plan (and preview/bundle) without any BLE writes; add -v to print it.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Also print the full transfer plan/result as JSON on stdout (every packet's bytes).",
     )
     parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0)
     parser.add_argument("--flip-horizontal", action="store_true")
@@ -193,7 +202,25 @@ def _render_cached(
     return cached.bundle
 
 
-def _print_transfer_summary(result: dict) -> None:
+def _timing_line(transfer: Mapping[str, Any], elapsed_s: float | None) -> str | None:
+    """Actual upload timing, or None for a dry run (nothing was sent).
+
+    ``total`` is the whole call including finding and connecting to the panel;
+    ``transfer`` is only the bytes moving. ``per_packet`` appears only when every
+    packet landed, so a stopped transfer never reports a misleading rate.
+    """
+    duration_ms = transfer.get("duration_ms")
+    if duration_ms is None:
+        return None
+    parts = [] if elapsed_s is None else [f"total={elapsed_s:.1f}s"]
+    parts.append(f"transfer={duration_ms / 1000:.1f}s")
+    packets = transfer.get("packet_count") or 0
+    if transfer.get("success") and packets:
+        parts.append(f"per_packet={duration_ms / packets:.0f}ms")
+    return " ".join(parts)
+
+
+def _print_transfer_summary(result: dict, *, elapsed_s: float | None = None) -> None:
     """Human-readable digest on stderr so the JSON firehose stays parseable.
 
     Distinguishes the two silent-failure modes we care about: the device NAKed a
@@ -213,6 +240,9 @@ def _print_transfer_summary(result: dict) -> None:
         f"packets={transfer.get('packet_count')} acks={transfer.get('acks_received')} "
         f"timeouts={transfer.get('ack_timeouts')}",
     ]
+    timing = _timing_line(transfer, elapsed_s)
+    if timing:
+        lines.append(timing)
     for error in transfer.get("errors", []):
         lines.append(f"error: {error}")
     if distinct:
@@ -249,7 +279,7 @@ def _print_image_diagnostics(bundle) -> None:
             )
 
 
-def _print_native_text_summary(result: dict) -> None:
+def _print_native_text_summary(result: dict, *, elapsed_s: float | None = None) -> None:
     """Digest for native text scroll (banner + SPEED + MODE on one session)."""
     meta = result.get("native_text", {})
     banner_meta = result.get("encoded", {}).get("banner", {}).get("metadata", {})
@@ -266,7 +296,134 @@ def _print_native_text_summary(result: dict) -> None:
         f"packets={banner_xfer.get('packet_count')} acks={banner_xfer.get('acks_received')} "
         f"timeouts={banner_xfer.get('ack_timeouts')}",
     ]
+    timing = _timing_line(banner_xfer, elapsed_s)
+    if timing:
+        lines.append(timing)
     print("\n".join(lines), file=sys.stderr)
+
+
+# The panel acks its first ~30 chunks fast, then settles to a slower steady rate a few
+# seconds in (measured 2026-10-29: 153 ms, then about 220 ms). Only an upload long enough
+# for its second half to sit past that warm-up may teach the remembered rate.
+_MIN_PACKETS_TO_LEARN_RATE = 60
+
+
+class _UploadProgress:
+    """Redraw one stderr line while packets go out, e.g. ``uploading 112/238 (47%), ~29 s left``.
+
+    Time left uses ``seconds_per_packet`` -- the panel's steady rate remembered from an
+    earlier upload -- when known, because an upload's own early chunks are acked faster
+    than the rest and would undershoot; otherwise it extrapolates the average so far.
+    Timing is tracked even off a terminal so ``steady_seconds_per_packet`` can be learned,
+    but the line only draws on one, so piped or logged stderr stays clean. Redraws use a
+    carriage return plus space padding rather than ANSI escapes, so any console renders it.
+    """
+
+    def __init__(
+        self,
+        stream: TextIO | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        seconds_per_packet: float | None = None,
+    ):
+        self.stream = sys.stderr if stream is None else stream
+        self.clock = clock
+        self.seconds_per_packet = seconds_per_packet
+        self.enabled = self.stream.isatty()
+        self._started: float | None = None
+        self._halfway: tuple[int, float] | None = None
+        self._finished: tuple[int, float] | None = None
+        self._width = 0
+
+    def __call__(self, sent: int, total: int) -> None:
+        if total <= 0:
+            return
+        now = self.clock()
+        if self._started is None:
+            self._started = now
+        if self._halfway is None and sent * 2 >= total:
+            self._halfway = (sent, now)
+        if sent >= total:
+            self._finished = (sent, now)
+        if self.enabled:
+            self._draw(sent, total, now - self._started)
+
+    @property
+    def steady_seconds_per_packet(self) -> float | None:
+        """Per-packet time over the second half of a finished upload; None if it was too short."""
+        if self._halfway is None or self._finished is None:
+            return None
+        (half_sent, half_at), (end_sent, end_at) = self._halfway, self._finished
+        if end_sent < _MIN_PACKETS_TO_LEARN_RATE or end_sent <= half_sent:
+            return None
+        return (end_at - half_at) / (end_sent - half_sent)
+
+    def _draw(self, sent: int, total: int, elapsed: float) -> None:
+        if sent >= total:
+            tail = f"done in {elapsed:.1f} s"
+        elif self.seconds_per_packet:
+            tail = f"~{math.ceil(self.seconds_per_packet * (total - sent))} s left"
+        elif sent:
+            tail = f"~{math.ceil(elapsed / sent * (total - sent))} s left"
+        else:
+            tail = "starting"
+        line = f"uploading {sent}/{total} ({sent * 100 // total}%), {tail}"
+        self.stream.write("\r" + line.ljust(self._width))
+        self.stream.flush()
+        self._width = len(line)
+
+    def __enter__(self) -> _UploadProgress:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        if self._width:
+            self.stream.write("\n")
+            self.stream.flush()
+            self._width = 0
+
+
+def _upload_rates_path(cache_dir: Path | None) -> Path:
+    return (cache_dir if cache_dir is not None else default_render_cache_dir()) / "upload-rates.json"
+
+
+def _load_upload_rate(panel: str | None, cache_dir: Path | None = None) -> float | None:
+    """The steady per-packet upload time remembered for ``panel``, in seconds."""
+    if not panel:
+        return None
+    try:
+        rates = json.loads(_upload_rates_path(cache_dir).read_text(encoding="utf-8"))
+        rate = float(rates[panel])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return rate if rate > 0 else None
+
+
+def _remember_upload_rate(
+    panel: str | None, seconds_per_packet: float | None, cache_dir: Path | None = None
+) -> None:
+    """Fold a measured steady rate into ``panel``'s remembered one, averaged with the last.
+
+    Averaging keeps one unusually slow or fast upload from swinging the next estimate. It
+    only tunes an ETA, so a cache that cannot be read or written is ignored.
+    """
+    if not panel or not seconds_per_packet or seconds_per_packet <= 0:
+        return
+    path = _upload_rates_path(cache_dir)
+    try:
+        rates = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(rates, dict):
+            rates = {}
+    except (OSError, ValueError):
+        rates = {}
+    previous = rates.get(panel)
+    if isinstance(previous, (int, float)) and previous > 0:
+        seconds_per_packet = (previous + seconds_per_packet) / 2
+    rates[panel] = seconds_per_packet
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rates, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
@@ -277,15 +434,20 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
     execute = _should_execute(args)
     action = "uploading to panel" if execute else "building no-send transfer plan"
     print(f"{action}: {len(bundle.frames)} frame(s)", file=sys.stderr)
+    started = time.monotonic()
+    cache_dir = getattr(args, "cache_dir", None)
+    remembered = _load_upload_rate(profile.device_id, cache_dir)
     try:
-        result = asyncio.run(
-            ProtocolRuntime(profile).upload_frame_bundle(
-                bundle,
-                execute=execute,
-                retry_limit=args.retry_limit,
-                timeout_seconds=args.timeout,
+        with _UploadProgress(seconds_per_packet=remembered) as progress:
+            result = asyncio.run(
+                ProtocolRuntime(profile).upload_frame_bundle(
+                    bundle,
+                    execute=execute,
+                    retry_limit=args.retry_limit,
+                    timeout_seconds=args.timeout,
+                    progress=progress,
+                )
             )
-        )
     except CodecError as exc:
         # A starter/unprofiled device has no verified codec, so it cannot build a
         # wire plan -- but preview/bundle output above does not need one. Fail
@@ -299,12 +461,15 @@ def _finish(profile: DeviceProfile, bundle, args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         return
-    print(json.dumps(result, indent=2))
-    _print_transfer_summary(result)
+    elapsed = time.monotonic() - started
+    if args.verbose:
+        print(json.dumps(result, indent=2))
+    _print_transfer_summary(result, elapsed_s=elapsed)
     transfer = result.get("transfer", {})
     if not transfer.get("success", False):
         detail = "; ".join(transfer.get("errors", [])) or "device transfer failed"
         raise RuntimeError(detail)
+    _remember_upload_rate(profile.device_id, progress.steady_seconds_per_packet, cache_dir)
 
 
 def _cmd_text(argv: list[str]) -> None:
@@ -403,20 +568,27 @@ def _cmd_text(argv: list[str]) -> None:
         f"user_speed={args.speed} -> device_speed={device_speed}, mode={args.mode}",
         file=sys.stderr,
     )
-    result = asyncio.run(
-        ProtocolRuntime(profile).play_native_text(
-            args.text,
-            banner.tobytes(),
-            banner.width,
-            speed=args.speed,
-            mode=args.mode,
-            execute=_should_execute(args),
-            retry_limit=args.retry_limit,
-            timeout_seconds=args.timeout,
+    started = time.monotonic()
+    with _UploadProgress(seconds_per_packet=_load_upload_rate(profile.device_id)) as progress:
+        result = asyncio.run(
+            ProtocolRuntime(profile).play_native_text(
+                args.text,
+                banner.tobytes(),
+                banner.width,
+                speed=args.speed,
+                mode=args.mode,
+                execute=_should_execute(args),
+                retry_limit=args.retry_limit,
+                timeout_seconds=args.timeout,
+                progress=progress,
+            )
         )
-    )
-    print(json.dumps(result, indent=2))
-    _print_native_text_summary(result)
+    elapsed = time.monotonic() - started
+    if args.verbose:
+        print(json.dumps(result, indent=2))
+    _print_native_text_summary(result, elapsed_s=elapsed)
+    if result.get("transfer", {}).get("success"):
+        _remember_upload_rate(profile.device_id, progress.steady_seconds_per_packet)
 
 
 def _cmd_image(argv: list[str]) -> None:
