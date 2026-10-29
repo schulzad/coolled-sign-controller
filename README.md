@@ -18,13 +18,13 @@ The design rule is **evidence before claims**: there are no hardcoded UUIDs, com
 
 ## Gallery
 
-The middle column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-colour, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right will show.
+Each row runs one source through the codec so you can compare it three ways: the **original artwork**, OpenSign's **64×16 render**, and the **same frames on the panel**. The render column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-colour, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right will show.
 
-| Source | OpenSign render → panel | On the panel |
-| :---: | :---: | :---: |
-| **Nyan cat**<br><sub>`nian.gif` · 12 frames · `--dither none`</sub> | <img src="examples/generated/gallery/nian.preview.gif" width="380" alt="Nyan cat compiled for a 64×16 panel"> | <img src="examples/recordings/nian.recording.png" width="380" alt="Nyan cat on the panel — recording coming soon"> |
-| **Sonic**<br><sub>`sonic-the-hedgehog.gif` · 4 frames · `--dither none`</sub> | <img src="examples/generated/gallery/sonic-the-hedgehog.preview.gif" width="380" alt="Sonic compiled for a 64×16 panel"> | <img src="examples/recordings/sonic-the-hedgehog.recording.png" width="380" alt="Sonic on the panel — recording coming soon"> |
-| **Matrix still**<br><sub>`matrix_still.png` · still · `--dither ordered`</sub> | <img src="examples/generated/gallery/matrix-still.png" width="380" alt="Matrix silhouette rendered for a 64×16 panel, channels overlapping into yellow and white"> | <img src="examples/recordings/matrix-still.recording.png" width="380" alt="Matrix still on the panel — recording coming soon"> |
+| Example | Source | OpenSign render → panel | On the panel |
+| :---: | :---: | :---: | :---: |
+| **Nyan cat**<br><sub>`nian.gif` · 12 frames · `--dither none`</sub> | <img src="examples/downloaded/nian.gif" width="240" alt="Original Nyan cat GIF before rendering"> | <img src="examples/generated/gallery/nian.preview.gif" width="240" alt="Nyan cat compiled for a 64×16 panel"> | <img src="examples/recordings/nian.recording.png" width="240" alt="Nyan cat on the panel — recording coming soon"> |
+| **Sonic**<br><sub>`sonic-the-hedgehog.gif` · 4 frames · `--dither none`</sub> | <img src="examples/downloaded/sonic-the-hedgehog.gif" width="240" alt="Original Sonic GIF before rendering"> | <img src="examples/generated/gallery/sonic-the-hedgehog.preview.gif" width="240" alt="Sonic compiled for a 64×16 panel"> | <img src="examples/recordings/sonic-the-hedgehog.recording.png" width="240" alt="Sonic on the panel — recording coming soon"> |
+| **Matrix still**<br><sub>`matrix_still.png` · still · `--dither ordered`</sub> | <img src="examples/generated/matrix_still.png" width="240" alt="Original Matrix still image before rendering"> | <img src="examples/generated/gallery/matrix-still.png" width="240" alt="Matrix silhouette rendered for a 64×16 panel, channels overlapping into yellow and white"> | <img src="examples/recordings/matrix-still.recording.png" width="240" alt="Matrix still on the panel — recording coming soon"> |
 
 <details>
 <summary>Reproduce the renders</summary>
