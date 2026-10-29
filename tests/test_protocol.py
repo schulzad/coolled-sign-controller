@@ -9,7 +9,7 @@ from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile, FrameBundle, default_device_profile
 from opensign.protocol.codec import CodecError, apply_checksum, render_hex_template, select_codec
 from opensign.protocol.packet import chunk_payload
-from opensign.protocol.transport import BleakTransport
+from opensign.protocol.transport import BleakTransport, DryRunTransport
 
 
 def literal_profile(*, status: str = "experimental") -> DeviceProfile:
@@ -463,6 +463,61 @@ def test_transport_stops_on_fatal_device_error() -> None:
     assert result.acks_received == 0
     assert result.errors == ["packet=0: device rejected packet with data_length_error (0x04)"]
     assert len(transport.client.writes) == 1
+
+
+def test_transport_reports_progress_after_each_packet() -> None:
+    transport = _prime_transport(coolledx_profile(), ack=True)
+    seen: list[tuple[int, int]] = []
+    asyncio.run(
+        transport.send_packets(
+            [b"\x01\x00\x01aa\x03", b"\x01\x00\x01bb\x03", b"\x01\x00\x01cc\x03"],
+            await_ack=True,
+            ack_timeout=0.5,
+            progress=lambda sent, total: seen.append((sent, total)),
+        )
+    )
+    assert seen == [(0, 3), (1, 3), (2, 3), (3, 3)]
+
+
+def test_transport_progress_never_counts_a_rejected_packet() -> None:
+    from opensign.protocol.codecs.coolledx import decode_coolledx_ack
+
+    transport = _prime_transport(coolledx_profile(), ack=False)
+    transport.client = _StatusClient(transport, [0x04])
+    seen: list[tuple[int, int]] = []
+    result = asyncio.run(
+        transport.send_packets(
+            [b"\x01\x00\x01aa\x03", b"\x01\x00\x01bb\x03"],
+            await_ack=True,
+            ack_timeout=0.5,
+            ack_decoder=decode_coolledx_ack,
+            progress=lambda sent, total: seen.append((sent, total)),
+        )
+    )
+    assert result.success is False
+    assert seen == [(0, 2)]
+
+
+def test_dry_run_transport_reports_no_progress_or_duration() -> None:
+    seen: list[tuple[int, int]] = []
+    result = asyncio.run(
+        DryRunTransport(coolledx_profile()).send_packets(
+            [b"\x01\x00\x01aa\x03"],
+            progress=lambda sent, total: seen.append((sent, total)),
+        )
+    )
+    assert result.dry_run is True
+    assert seen == []
+    assert result.duration_ms is None
+
+
+def test_transport_records_transfer_duration() -> None:
+    transport = _prime_transport(coolledx_profile(), ack=True)
+    result = asyncio.run(
+        transport.send_packets([b"\x01\x00\x01aa\x03"], await_ack=True, ack_timeout=0.5)
+    )
+    assert result.duration_ms is not None and result.duration_ms >= 0
+    assert result.to_dict()["duration_ms"] == result.duration_ms
 
 
 def test_transport_without_decoder_counts_bare_notification_as_ack() -> None:

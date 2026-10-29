@@ -18,3 +18,5 @@ evidence/**/*.pcapng
 evidence/**/*.btsnoop
 evidence/**/*.log
 !evidence/**/.gitkeep
+
+examples/downloaded/

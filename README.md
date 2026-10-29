@@ -96,7 +96,7 @@ Python 3.11+. Core dependencies are **Bleak** (BLE) and **Pillow** (rendering); 
 
 ## Quickstart
 
-Render/send commands **write to the panel by default**. Add `--dry-run` to build the byte-exact transfer plan without touching Bluetooth; supplying `--preview PATH` also always disables delivery.
+Render/send commands **write to the panel by default**, showing a live progress line and a short transfer summary. Add `--dry-run` to build the byte-exact transfer plan without touching Bluetooth, and `-v` to print the full plan/result JSON; supplying `--preview PATH` also always disables delivery.
 
 ```bash
 # No hardware: render a preview to a file
@@ -142,7 +142,7 @@ curl -X POST http://127.0.0.1:8124/text -H 'content-type: application/json' \
 | `control …` | `opensign-send control` | Send a control command (`brightness`, `power`, …) |
 | `serve` | `opensign-api` | Run the localhost API |
 
-Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal/--flip-vertical`, `--profile PATH`. Image/animation `--fit` uses standard object-fit names: `contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts its aspect ratio; the old name `stretch` remains an alias for `fill`. `image` adds colour controls (`--dither`, `--temporal N`, `--auto-levels`, `--black-level`, `--white-level`); `animation` adds `--key-color` / `--key-tolerance` to knock a bright background out to black, and `--scroll` (with `--scroll-px` / `--direction`) to march the clip across the panel as a sprite. Image and animation bundles are cached by source contents, panel geometry, and rendering options; pass `--no-cache` to rebuild or `--cache-dir PATH` to choose the location. Run `coolled <command> --help` for the full list.
+Common render/send flags: `--dry-run`, `-v`/`--verbose` (print the full plan/result JSON), `--preview PATH` (implies no send), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal/--flip-vertical`, `--profile PATH`. Image/animation `--fit` uses standard object-fit names: `contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts its aspect ratio; the old name `stretch` remains an alias for `fill`. `image` adds colour controls (`--dither`, `--temporal N`, `--auto-levels`, `--black-level`, `--white-level`); `animation` adds `--key-color` / `--key-tolerance` to knock a bright background out to black, and `--scroll` (with `--scroll-px` / `--direction`) to march the clip across the panel as a sprite. Image and animation bundles are cached by source contents, panel geometry, and rendering options; pass `--no-cache` to rebuild or `--cache-dir PATH` to choose the location. The cache directory also remembers each panel's measured upload rate, so the progress line's time-left estimate is accurate from the first chunk. Run `coolled <command> --help` for the full list.
 
 ### HTTP API
 
