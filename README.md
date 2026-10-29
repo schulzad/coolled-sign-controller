@@ -6,6 +6,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#status)
+[![License: MIT](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 [![Codec](https://img.shields.io/badge/codec-hardware--verified-brightgreen)](#verified-on-hardware)
 
 <img src="examples/generated/live-frame.png" alt="HELLO rendered on a 64x16 panel" width="640">
@@ -222,4 +223,4 @@ protocol.md              Evidence ledger and promotion process
 
 ## Status
 
-Alpha: the discover → render → encode → deliver path is verified end-to-end on the reference panel, but this is a research-grade tool for a reverse-engineered protocol, not a polished product. No license file is included yet — treat the code as all-rights-reserved until one is added.
+Alpha: the discover → render → encode → deliver path is verified end-to-end on the reference panel, but this is a research-grade tool for a reverse-engineered protocol, not a polished product. Released under the [MIT License](LICENSE); parts of the CoolLEDX codec are adapted from [coolledx-driver](https://github.com/UpDryTwist/coolledx-driver) (also MIT), see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
