@@ -92,7 +92,7 @@ source .venv/bin/activate            # Windows PowerShell: .venv\Scripts\Activat
 python -m pip install -e '.[api,dev]'
 ```
 
-Python 3.11+. Core dependencies are **Bleak** (BLE) and **Pillow** (rendering); **FastAPI** + **Uvicorn** are optional (`[api]` extra). Installs the umbrella `coolled` command plus `opensign-scan`, `opensign-preview`, `opensign-send`, and `opensign-api`.
+Python 3.11+. Core dependencies are **Bleak** (BLE) and **Pillow** (rendering); **FastAPI** + **Uvicorn** are optional (`[api]` extra). Installs the umbrella `coolled` command plus `opensign-scan`, `opensign-preview`, `opensign-send`, `opensign-api`, and `opensign-verbs` (`[mcp]` extra).
 
 ## Quickstart
 
@@ -159,6 +159,40 @@ Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bu
 | `POST` | `/power` | Turn the panel on/off |
 
 `/animation` and `/image` (`temporal`) compile server-side. The API's `/text` now uses the device-native firmware scroll by default (matching `coolled text`); pass `native=false` for the host-side flipbook or `scroll=false` for a single static frame.
+
+### MCP render surface
+
+`opensign-verbs` is a read-only [MCP](https://modelcontextprotocol.io) server, `coolled-verbs`, that lets an agent see what the panel would show. It follows the verbs-and-nouns shape of smdl-factory's `smdl-verbs`: call a verb with no noun to list its nouns.
+
+| Verb | Nouns | Returns |
+| --- | --- | --- |
+| `describe` | `panel`, `legend` | Geometry, colours and capability statuses; the character each colour renders as |
+| `render` | `text`, `pattern`, `image`, `bundle` | Each frame as text, one character per pixel (`.` off, `#` lit, or a colour letter) |
+
+`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`; it never encodes or sends. Install with `pip install -e '.[mcp]'` and register it with your client:
+
+```json
+{
+  "mcpServers": {
+    "coolled-verbs": {
+      "command": "opensign-verbs",
+      "args": ["--profile", "/path/to/device_profile.local.json"]
+    }
+  }
+}
+```
+
+```
+render text value=HELLO   (rows 4-11 of 16)
+................#....#..####..#.....#......###..................
+................#....#..#.....#.....#.....#...#.................
+................#....#..#.....#.....#....#.....#................
+................#....#..#.....#.....#....#.....#................
+................######..####..#.....#....#.....#................
+................#....#..#.....#.....#....#.....#................
+................#....#..#.....#.....#.....#...#.................
+................#....#..#####.#####.#####..###..................
+```
 
 ## Verified on hardware
 
