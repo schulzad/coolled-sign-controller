@@ -1,0 +1,401 @@
+Seedscript module description language 2.3
+
+Module("FeatureBoard") {
+  description: "Planning board for OpenSign features that are designed but not built. Each card names the entry point it adds, the functions it needs, the layer module that will own it, what it costs against the measured device budget, and the evidence it needs before it ships. Nothing on this board touches the radio; a card graduates by moving its Functions into its owning layer spec when the code lands."
+  metaphor: "A workshop pegboard: every tool's outline is drawn before the tool is hung."
+  version: "2.3"
+  tags: ['planning', 'backlog', 'design-only', 'feature-board']
+  theme: {
+    visual_style: "workshop",
+    color_palette: ['#3d2c1e', '#c08b5c', '#f2e8cf'],
+    metaphorical_language: "pegboard outlines waiting for their tools"
+  }
+
+  components: {
+    Roots {
+      Directive("/scroll_gap") {
+        description: "Card F1. Pause between scroll passes: blank frames at the loop seam of an animation scroll (coolled animation --scroll --scroll-gap-ms N), or blank trailing columns on a native text banner (--gap-px N)."
+        metaphor: "Leaving an empty hook between two tools so each one reads on its own."
+        parameters: {
+          path: { type: "enum", options: ["animation_scroll", "native_text"], description: "Which scroll the gap applies to.", required: false, default: "animation_scroll" },
+          gap_ms: { type: "int", description: "Blank hold appended at the loop seam of an animation scroll.", required: false, default: 0 },
+          gap_px: { type: "int", description: "Blank columns appended to a native text banner.", required: false, default: 16 }
+        }
+        actions: { plan: "plan_scroll_budget", pad: "pad_scroll_gap", pad_banner: "pad_banner_gap" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F1", "status:ready"]
+      }
+
+      Directive("/music_bars") {
+        description: "Card F2. Host-driven music visualizer: the host listens to its microphone, folds the spectrum into bands, and pushes bar heights to the panel with opcode 0x01. Dry-run by default until 0x01 is verified on hardware."
+        metaphor: "A pegboard light that pulses with the radio on the workbench, wired from the bench, not the board."
+        parameters: {
+          rate_hz: { type: "float", description: "Bar frames pushed per second.", required: false, default: 20.0 },
+          bands: { type: "int", description: "Spectrum bands, one per bar.", required: false, default: 8 },
+          colors: { type: "array[string]", description: "One colour per bar.", required: false },
+          execute: { type: "bool", description: "Write to the panel instead of printing packets.", required: false, default: false }
+        }
+        actions: { listen: "capture_audio_bands", encode: "encode_music_bars", push: "stream_music_bars" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F2", "status:proposed", "needs-hardware-evidence"]
+      }
+
+      Directive("/render_options") {
+        description: "Card F3. One shared set of render flags for coolled image and coolled animation: fit, background, dither, levels, and key colour, with per-command dither defaults."
+        metaphor: "One rack of shared bits instead of a separate set clipped to every drill."
+        parameters: {
+          command: { type: "enum", options: ["image", "animation"], description: "Which command is being configured.", required: true }
+        }
+        actions: { flags: "add_common_render_arguments", key: "key_still_background", levels: "level_clip_frames" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F3", "status:ready"]
+      }
+
+      Directive("/play_program") {
+        description: "Card F4. Compile a multi-page program into as few 0x04 uploads as the budget allows, so the panel loops the pages itself instead of the host re-uploading (and the panel showing its progress indicator) on every page change."
+        metaphor: "Hanging the whole set of templates at once instead of fetching each one from the drawer."
+        parameters: {
+          pages: { type: "array[object]", description: "Ordered pages, each a panel-sized image and a hold in milliseconds.", required: true },
+          quantum_ms: { type: "int", description: "Grid that page holds snap to before the shared speed is derived.", required: false, default: 250 },
+          execute: { type: "bool", description: "Write to the panel instead of producing a plan.", required: false, default: false }
+        }
+        actions: { snap: "quantize_page_durations", compile: "compile_program_frames", split: "split_program_at_budget" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F4", "status:proposed", "extends:W4"]
+      }
+    }
+
+    Bloom {
+      Function("plan_scroll_budget") {
+        description: "Split the frame budget between the scroll pass and its gap before anything is rendered, so the gap is honored instead of thinned away."
+        metaphor: "Measuring the board before drilling the holes."
+        input_parameters: {
+          budget_frames: { type: "int", description: "Frames one upload may carry (79 at 64x16).", required: true },
+          gap_ms: { type: "int", description: "Requested gap.", required: true },
+          step_ms: { type: "int", description: "Hold per output frame (1000 / fps).", required: true }
+        }
+        output_format: {
+          pass_frames: "int Frames left for the scroll pass.",
+          gap_frames: "int Blank frames reserved for the gap.",
+          raises: "ValueError — when the gap alone would consume the whole budget."
+        }
+        implementation: |
+          def plan_scroll_budget(budget_frames, gap_ms, step_ms):
+              gap_frames = gap_ms divided by step_ms, rounded up
+              if gap_frames >= budget_frames:
+                  refuse: the gap alone would fill the upload
+              return budget_frames - gap_frames, gap_frames
+        tags: ["pure", "budget"]
+      }
+
+      Function("pad_scroll_gap") {
+        description: "Append blank background frames after the scroll pass, so on loop the panel holds empty for the gap before the sprite re-enters. A gap of 0 must reproduce today's bytes exactly."
+        metaphor: "A blank stretch of pegboard between two outlines."
+        input_parameters: {
+          pass_frames: { type: "array[Image]", description: "The scroll pass, already thinned to its share of the budget.", required: true },
+          gap_frames: { type: "int", description: "Blank frames to append.", required: true },
+          background: { type: "string", description: "Fill colour for the gap.", required: false, default: "black" }
+        }
+        output_format: {
+          frames: "list[Image] The pass followed by the blank gap frames."
+        }
+        implementation: |
+          def pad_scroll_gap(pass_frames, gap_frames, background):
+              blank = a panel-sized canvas filled with background
+              return pass_frames followed by gap_frames copies of blank
+        tags: ["pure", "budget"]
+      }
+
+      Function("pad_banner_gap") {
+        description: "Widen a native text banner with blank trailing columns. On the 0x02 path the firmware marches one static bitmap, so a gap costs bytes (6 per column at 16 px tall), never frames."
+        metaphor: "Spacing the letters on the sign rail, not hanging another sign."
+        input_parameters: {
+          banner: { type: "Image", description: "Wide native-scroll banner at panel height.", required: true },
+          gap_px: { type: "int", description: "Blank columns to append.", required: true },
+          background: { type: "string", description: "Fill colour for the columns.", required: false, default: "black" }
+        }
+        output_format: {
+          banner: "Image — the banner widened by the blank columns."
+        }
+        implementation: |
+          def pad_banner_gap(banner, gap_px, background):
+              widen banner by gap_px background-coloured columns on its trailing edge
+              return banner
+        tags: ["pure"]
+      }
+
+      Function("capture_audio_bands") {
+        description: "Read one window of microphone audio, take its magnitude spectrum, and fold it into log-spaced bands scaled 0..1. All listening happens on the host: the panel has no audio input and no stream receiver."
+        metaphor: "Holding a hand to the speaker to feel which drum is loudest."
+        input_parameters: {
+          window_ms: { type: "int", description: "Audio analysed per bar frame.", required: false, default: 50 },
+          bands: { type: "int", description: "Bands to fold the spectrum into.", required: false, default: 8 }
+        }
+        output_format: {
+          levels: "list[float] Band magnitudes scaled 0..1, low to high frequency."
+        }
+        implementation: |
+          def capture_audio_bands(window_ms, bands):
+              samples = one window of microphone audio
+              spectrum = magnitude spectrum of samples
+              return spectrum folded into bands log-spaced bins, each scaled 0..1
+        tags: ["side-effect", "host-only", "optional-dependency:audio"]
+      }
+
+      Function("encode_music_bars") {
+        description: "Encode bar heights and colours as one opcode 0x01 command in the standard CoolLEDX framing. Layout follows the reference driver (8 heights then 8 colours) and is unverified on this panel; the driver notes CoolLEDM packs half-bytes instead."
+        metaphor: "Cutting the stencil before anyone sprays paint through it."
+        input_parameters: {
+          levels: { type: "array[float]", description: "Band magnitudes from capture_audio_bands.", required: true },
+          colors: { type: "array[string]", description: "One colour per bar.", required: false }
+        }
+        output_format: {
+          packet: "Packet — one framed, escaped opcode 0x01 command."
+        }
+        implementation: |
+          def encode_music_bars(levels, colors):
+              heights = each level scaled to the panel height
+              payload = opcode 0x01, then 8 height bytes, then 8 colour bytes
+              return payload framed and escaped like every CoolLEDX command
+        tags: ["pure", "unverified-opcode"]
+      }
+
+      Function("stream_music_bars") {
+        description: "Push bar frames at a fixed rate, fire-and-forget (the reference driver expects no ack for 0x01). A dry run prints byte-exact packets and writes nothing."
+        metaphor: "A metronome tapping the pegboard light in time."
+        input_parameters: {
+          rate_hz: { type: "float", description: "Frames per second.", required: false, default: 20.0 },
+          execute: { type: "bool", description: "Write instead of printing.", required: false, default: false }
+        }
+        output_format: {
+          sent: "int Packets written, or printed on a dry run, before stopping."
+        }
+        implementation: |
+          def stream_music_bars(rate_hz, execute):
+              loop until stopped:
+                  levels = capture_audio_bands(window_ms, bands)
+                  packet = encode_music_bars(levels, colors)
+                  if execute: write packet without waiting for an ack
+                  else: print the packet bytes as hex
+                  wait one period at rate_hz
+        tags: ["loop", "side-effect", "dry-run-first"]
+      }
+
+      Function("add_common_render_arguments") {
+        description: "Register the render flags both commands share in one place: fit, background, dither (default none for image, ordered for animation), auto/black/white levels, key colour and key tolerance. Command-specific flags stay put: temporal, duration-ms, fps, max-frames, scroll."
+        metaphor: "One labelled rack of bits that every drill reaches into."
+        input_parameters: {
+          parser: { type: "ArgumentParser", description: "The command's parser.", required: true },
+          default_dither: { type: "enum", options: ["none", "ordered", "floyd"], description: "Per-command dither default.", required: true }
+        }
+        output_format: {
+          parser: "ArgumentParser — the parser with the shared render flags added."
+        }
+        implementation: |
+          def add_common_render_arguments(parser, default_dither):
+              add fit, background, dither defaulting to default_dither,
+              auto/black/white levels, key colour and key tolerance
+              return parser
+        tags: ["cli"]
+      }
+
+      Function("key_still_background") {
+        description: "Bring key colour to stills: knock a background colour out to black before quantizing, resolving auto from the source border as the animation path already does."
+        metaphor: "Masking off the workbench so only the part gets painted."
+        input_parameters: {
+          image: { type: "Image", description: "Fitted still.", required: true },
+          key_color: { type: "string", description: "A colour, or auto to sample the source border.", required: true },
+          tolerance: { type: "int", description: "RGB distance 0..441 counted as background.", required: false, default: 96 }
+        }
+        output_format: {
+          image: "Image — the still with the keyed background set to black."
+        }
+        implementation: |
+          def key_still_background(image, key_color, tolerance):
+              key = the border-detected colour when key_color is auto, else key_color
+              return image with every pixel within tolerance of key set to black
+        tags: ["pure"]
+      }
+
+      Function("level_clip_frames") {
+        description: "Bring levels to animations: derive black and white points once (from the middle frame when auto) and apply the same stretch to every frame, so a clip never shimmers from frame-by-frame auto-contrast."
+        metaphor: "Setting the lamp once for the whole job, not per cut."
+        input_parameters: {
+          frames: { type: "array[Image]", description: "Source frames before fitting.", required: true },
+          auto_levels: { type: "bool", description: "Derive the points from the middle frame.", required: false, default: false },
+          black_point: { type: "int", description: "Manual black point.", required: false, default: 0 },
+          white_point: { type: "int", description: "Manual white point.", required: false, default: 255 }
+        }
+        output_format: {
+          frames: "list[Image] Every frame stretched with one shared black and white point."
+        }
+        implementation: |
+          def level_clip_frames(frames, auto_levels, black_point, white_point):
+              if auto_levels: derive black and white points once from the middle frame
+              return every frame stretched with those same points
+        tags: ["pure"]
+      }
+
+      Function("quantize_page_durations") {
+        description: "Snap every page hold to a multiple of quantum_ms (at least one quantum), so the shared speed derived from them stays coarse and the frame count stays small."
+        metaphor: "Cutting every board to the nearest inch mark before assembly."
+        input_parameters: {
+          pages: { type: "array[object]", description: "Pages with their requested holds.", required: true },
+          quantum_ms: { type: "int", description: "Snap grid in milliseconds.", required: false, default: 250 }
+        }
+        output_format: {
+          holds: "list[int] Page holds in milliseconds, each a positive multiple of quantum_ms."
+        }
+        implementation: |
+          def quantize_page_durations(pages, quantum_ms):
+              return each page hold snapped to the nearest multiple of quantum_ms, never below one quantum
+        tags: ["pure", "budget"]
+      }
+
+      Function("compile_program_frames") {
+        description: "Turn pages into 0x04 frames under one global speed: speed is the greatest common divisor of the snapped holds (at most 65,535 ms), and each page repeats hold / speed times. Uniform holds cost one frame per page."
+        metaphor: "Hanging each template as many times as it should stay in view."
+        input_parameters: {
+          pages: { type: "array[object]", description: "Ordered pages with holds.", required: true },
+          quantum_ms: { type: "int", description: "Snap grid passed to quantize_page_durations.", required: false, default: 250 }
+        }
+        output_format: {
+          uploads: "list[FrameBundle] One bundle per upload, each within the frame budget."
+        }
+        implementation: |
+          def compile_program_frames(pages, quantum_ms):
+              holds = quantize_page_durations(pages, quantum_ms)
+              speed_ms = the greatest common divisor of holds
+              frames = each page rendered once and repeated hold / speed_ms times
+              return split_program_at_budget(frames, speed_ms)
+        tags: ["budget", "deterministic-timing"]
+      }
+
+      Function("split_program_at_budget") {
+        description: "Group consecutive pages into uploads that each fit the 30,720-byte payload (79 frames at 64x16), never splitting inside a page. One group loops on the panel unattended; several groups still need timed switching between uploads."
+        metaphor: "Packing the templates into as few crates as the van allows."
+        input_parameters: {
+          frames: { type: "array[Image]", description: "Program frames in page order.", required: true },
+          speed_ms: { type: "int", description: "The shared per-frame hold.", required: true }
+        }
+        output_format: {
+          groups: "list[FrameBundle] Page-aligned groups that each fit one upload."
+        }
+        implementation: |
+          def split_program_at_budget(frames, speed_ms):
+              add whole pages to the current group while it stays within 79 frames
+              start a new group at the first page that would overflow it
+              return the groups, each stamped with speed_ms
+        tags: ["budget"]
+      }
+    }
+
+    Sprout {
+      Chain("ScrollGapFlow") {
+        description: "Plan the budget, then pad the animation pass; or pad the native banner, which costs no frames."
+        metaphor: "Measure, then space the hooks."
+        links: [
+          { source: "/scroll_gap", target: "plan_scroll_budget", description: "Reserve gap frames before the pass is thinned." },
+          { source: "plan_scroll_budget", target: "pad_scroll_gap", description: "Append blank frames at the loop seam." },
+          { source: "/scroll_gap", target: "pad_banner_gap", description: "Native text path: blank columns, zero frames." }
+        ]
+        tags: ["fan-out", "budget"]
+      }
+
+      Chain("MusicBarsFlow") {
+        description: "Listen, encode, push, repeat, entirely host-driven."
+        metaphor: "The light follows the radio, one beat at a time."
+        links: [
+          { source: "/music_bars", target: "stream_music_bars", description: "Start the push loop (dry run unless execute)." },
+          { source: "stream_music_bars", target: "capture_audio_bands", description: "Sample one window." },
+          { source: "capture_audio_bands", target: "encode_music_bars", description: "Bands to an 0x01 packet." },
+          { source: "encode_music_bars", target: "stream_music_bars", description: "Write or print, then wait one period." }
+        ]
+        tags: ["loop", "host-only"]
+      }
+
+      Chain("RenderOptionsFlow") {
+        description: "Shared flags fan out to the still and clip paths that lack them today."
+        metaphor: "One rack, two drills."
+        links: [
+          { source: "/render_options", target: "add_common_render_arguments", description: "Register the shared flags." },
+          { source: "add_common_render_arguments", target: "key_still_background", description: "Key colour reaches stills." },
+          { source: "add_common_render_arguments", target: "level_clip_frames", description: "Levels reach clips." }
+        ]
+        tags: ["fan-out", "cli"]
+      }
+
+      Chain("ProgramUploadFlow") {
+        description: "Snap holds, derive one speed, duplicate pages, split at page boundaries."
+        metaphor: "Cut, count, crate."
+        links: [
+          { source: "/play_program", target: "quantize_page_durations", description: "Snap holds to the grid." },
+          { source: "quantize_page_durations", target: "compile_program_frames", description: "Shared speed and page repeats." },
+          { source: "compile_program_frames", target: "split_program_at_budget", description: "Page-aligned uploads within budget." }
+        ]
+        tags: ["pipe", "budget"]
+      }
+    }
+
+    Kernels {
+      Kernel("FeatureBoardKernel") {
+        description: "Governs the board: keeps every card design-only until it graduates into its owning layer spec, and holds each card to the device facts it must respect."
+        metaphor: "The shop foreman who checks the outline before any tool goes on the wall."
+        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow']
+        invariants: [
+          "DESIGN ONLY: No card on this board is built. A card graduates by moving its Functions into its owning layer module's spec when the code lands, and leaves the board.",
+          "BUDGET FIRST: Every frame a card adds (gap frames, repeated program pages) counts against the measured 30,720-byte 0x04 payload ceiling, 79 frames at 64x16 after the 27-byte header, and is planned before rendering, never truncated after.",
+          "UNVERIFIED STAYS DRY: A card that relies on an unverified opcode (0x01 music bars) ships dry-run-first, and needs live-hardware evidence recorded in DeviceProfileLedger before it may write by default.",
+          "NOT STREAMING: Music bars are a small dedicated host-pushed command, not general frame streaming, which stays rejected; no card reopens frame_streaming.",
+          "ONE GLOBAL SPEED: Per-page or per-gap timing on a 0x04 upload is expressed by repeating frames against one ms-per-frame speed, never by assuming per-frame durations the device does not store.",
+          "PANEL-ONLY COLOUR: Temporal (FRC) colour exists only on the physical panel, so no card validates it from a preview."
+        ]
+        tags: ["governance", "design-only"]
+      }
+    }
+  }
+
+  Semantics: {
+    layer: "planning -- cross-layer feature board; design-only, owns no runtime code"
+    owns: |
+      - The backlog of designed-but-unbuilt cards, each with an entry point, the Functions it needs, an owning layer module, a budget cost, acceptance criteria, and the evidence it needs.
+      - The budget arithmetic every card must respect before it is built.
+    delegates: |
+      - F1 and F3 to PixelFramePipeline and the coolled CLI.
+      - F2 to CoolLEDXProtocol (the 0x01 encoder) and SignControlService (the live loop), with promotion through DeviceProfileLedger.
+      - F4 to SignControlService and PixelFramePipeline, preflighted by CoolLEDXProtocol.
+      - All wire encoding and every BLE write to CoolLEDXProtocol and GuardedTransport; nothing on this board touches the radio.
+    cards: |
+      F1 Scroll gap -- status: ready.
+        Why: an animation scroll loops seamlessly, so the sprite re-enters the instant it exits; a pause between passes reads better on a 64 px panel.
+        Shape: coolled animation --scroll --scroll-gap-ms N appends blank frames at the loop seam; the native text path takes --gap-px N blank banner columns.
+        Cost: animation gap = gap_ms / step_ms frames (rounded up) of 384 B each from the 79-frame budget, so 500 ms at 20 fps is 10 frames; a native text gap is 6 B per column and no frames.
+        Accept: the pass is thinned to the budget minus the gap frames before the gap is appended; gap 0 reproduces today's bytes.
+      F2 Music-bars visualizer -- status: proposed, needs hardware evidence.
+        Why: the vendor app's visualizer. The panel has no audio input or stream receiver; the host listens, folds the spectrum into 8 bands, and pushes bar heights.
+        Shape: a coolled music command, dry-run by default, that captures the microphone and pushes opcode 0x01 frames fire-and-forget at rate_hz.
+        Risk: the 0x01 layout comes only from the reference driver (8 heights plus 8 colours; CoolLEDM reportedly packs half-bytes) and is unverified on CoolLEDX; the push rate the panel tolerates is unknown; microphone capture adds an optional [audio] dependency.
+        Accept: the dry run prints byte-exact packets; a live test that visibly moves the bars is recorded in DeviceProfileLedger before execute becomes the default.
+      F3 Image/animation option parity -- status: ready (unblocked once the scroll work merged in PR #2).
+        Why: image cannot key out a background and animation cannot auto-contrast; both gaps are arbitrary.
+        Shape: one add_common_render_arguments for fit, background, dither, levels, and key colour; key colour reaches create_image_bundle; levels reach create_gif_bundle, derived once from the middle frame.
+        Keep: per-command dither defaults (image none, animation ordered); --temporal stays image-only because its colours exist only on the panel.
+        Accept: every shared flag parses on both commands, renders with default flags stay byte-identical, and render-cache keys include the new parameters.
+      F4 Program as one upload -- status: proposed (extends manifest workstream W4).
+        Why: multi-page controllers re-upload on every page change, and the panel shows its progress indicator each time; one 0x04 upload loops on the panel with no host involvement.
+        Shape: each page becomes one frame; holds snap to quantum_ms; the speed is their greatest common divisor; each page repeats hold / speed times.
+        Cost: up to 79 frames per upload at 64x16. Ten pages at a uniform 3 s cost 10 frames at speed 3000; holds of 2 s and 3 s cost 2 + 3 frames at speed 1000.
+        Limits: one global speed per upload, at most 65,535 ms per frame; mixing smooth host-side scroll with long holds is expensive (a 2 s hold at 50 ms per frame is 40 frames); an over-budget program splits at page boundaries, and those splits still need timed switching.
+        Accept: the plan reports frames and payload bytes before any write and never splits inside a page.
+    evidence_basis: |
+      - The 0x04 speed field is a per-frame hold in milliseconds (speed sweep 64 / 512 / 2000 on the reference panel, 2026-07-13).
+      - The 0x04 payload ceiling is 30,720 B including the 27-byte header: 79 frames at 64x16 were accepted with 238/238 success acks, and 80 frames were rejected on packet 0 with status 0x04 DATA_LENGTH_ERROR (2026-08-15).
+      - Temporal (FRC) colour only exists on the panel; previews show the binarized subframes.
+    open_questions: |
+      - Does the same 30,720-byte ceiling govern 0x02 banners? An independent 64x16 CoolLEDX controller publicly reports 0x02 uploads of 30,695 B succeeding, which fits.
+      - What push rate does the panel tolerate for 0x01 before it drops or queues packets?
+      - Does a 0x04 upload show the same progress indicator as 0x02, and does it survive power loss the way 0x02 content does?
+    provenance: |
+      - F1 and F2 came out of the side-scroll review (2026-09-05). F3 was deferred until the scroll work merged (PR #2). F4 is motivated by multi-page controllers that re-upload per page, such as RavestickBoard (github.com/du13500/RavestickBoard-for-CoolLED1248).
+  }
+}

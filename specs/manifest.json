@@ -9,7 +9,8 @@
     "protocol/codec  -> encode commands + emit pacing hints",
     "protocol/transport -> move bytes, honor pacing, gate execute",
     "animation       -> render scenes to transport-neutral frames",
-    "sdk/api         -> orchestrate panels, execute gate, tracing"
+    "sdk/api         -> orchestrate panels, execute gate, tracing",
+    "planning        -> feature board: designed-but-unbuilt cards (design-only)"
   ],
   "modules": [
     {
@@ -65,6 +66,15 @@
       "status": "hardware-verified via runtime path",
       "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "GuardedTransport", "DeviceProfileLedger"],
       "summary": "Sole cross-module orchestrator: panel registry, global execute gate + per-call override, bounded animated-media ingest, temporal-colour image option, three-truths recording (host/ack/display), tracing, artifacts, and the FastAPI endpoints (/status, /text, /image [static|temporal], /animation, /bundle, /brightness, /power)."
+    },
+    {
+      "module": "FeatureBoard",
+      "file": "FeatureBoard.smdl",
+      "layer": "planning",
+      "source": "none yet -- design-only backlog; cards graduate into their owning layer spec when built",
+      "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4)",
+      "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService", "DeviceProfileLedger", "GuardedTransport"],
+      "summary": "Feature backlog: each card names its entry point, the Functions it needs, its owning layer module, its cost against the measured 30,720-byte / 79-frame 0x04 budget, and its acceptance criteria. Governed by FeatureBoardKernel; nothing here touches the radio."
     }
   ],
   "data_flow": [
