@@ -27,6 +27,7 @@ from pydantic import Field
 from opensign.animation.preview import TEXT_LEGEND, TEXT_STYLES, text_preview
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile, FrameBundle
+from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
@@ -43,11 +44,11 @@ mcp = FastMCP(
     instructions=(
         "A read-only render surface for a CoolLEDX LED panel. Call a verb with no noun "
         "to see its nouns and their arguments. describe panel gives the geometry and "
-        "colours; render compiles text, a pattern, an image or a frame bundle exactly as "
-        "the panel would show it and returns each frame as text, one character per "
-        "pixel: '.' is off, and either '#' marks a lit pixel (mono) or a letter names "
-        "its colour (describe legend). Nothing is sent to the panel. Every path must be "
-        "absolute."
+        "colours; render compiles text, a pattern, an image, an animation or a frame "
+        "bundle exactly as the panel would show it and returns each frame as text, one "
+        "character per pixel: '.' is off, and either '#' marks a lit pixel (mono) or a "
+        "letter names its colour (describe legend). Nothing is sent to the panel. Every "
+        "path must be absolute."
     ),
 )
 
@@ -62,12 +63,15 @@ NOUNS: dict[str, dict[str, tuple[str, str]]] = {
                  "text as the panel shows it, static or as a host-side scroll"),
         "pattern": ("value [frame] [style]", "a built-in pattern: test, checker or two-frame"),
         "image": ("path [fit] [dither] [style]", "an image fitted and quantized to the panel"),
+        "animation": ("path [fit] [dither] [key_color] [scroll] [background] [frame] [style]",
+                      "an animated GIF, WebP or APNG as the panel plays it, in place or "
+                      "side-scrolling"),
         "bundle": ("path [frame] [style]", "a saved frame bundle (.json)"),
     },
 }
 
 PATTERNS = ("test", "checker", "two-frame")
-FITS = ("contain", "cover", "stretch")
+FIT_MODES = {"contain": "contain", "cover": "cover", "fill": "stretch", "stretch": "stretch"}
 DITHERS = ("none", "ordered", "floyd")
 
 
@@ -113,6 +117,11 @@ def _profile() -> DeviceProfile:
     if path == DEFAULT_PROFILE and not path.exists() and STARTER_PROFILE.exists():
         path = STARTER_PROFILE
     return DeviceProfile.load(path)
+
+
+def _frame_budget(profile: DeviceProfile) -> int:
+    """The most frames one 0x04 upload holds at the panel's geometry."""
+    return PIXEL_BYTES_MAX // max(1, profile.width * profile.height * 3 // 8)
 
 
 def _frames(bundle: FrameBundle, frame: str) -> tuple[list[int], str | None]:
@@ -194,12 +203,13 @@ def describe(
 def render(
     noun: Annotated[str, _noun("render", "What to render; omit to list the nouns.")] = "",
     value: Annotated[str, Field(description="text: the message. pattern: test, checker or two-frame.")] = "",
-    path: Annotated[str, Field(description="image or bundle: the file, as an absolute path.")] = "",
-    scroll: Annotated[bool, Field(description="text only: a host-side scroll instead of one static frame.")] = False,
+    path: Annotated[str, Field(description="image, animation or bundle: the file, as an absolute path.")] = "",
+    scroll: Annotated[bool, Field(description="text or animation: scroll across the panel host-side instead of showing in place.")] = False,
     foreground: Annotated[str, Field(description="text only: a colour name or #rrggbb.")] = "white",
-    background: Annotated[str, Field(description="text only: a colour name or #rrggbb.")] = "black",
-    fit: Annotated[str, Field(description="image only: contain, cover or stretch.")] = "contain",
-    dither: Annotated[str, Field(description="image only: none, ordered or floyd.")] = "none",
+    background: Annotated[str, Field(description="text or animation: a colour name or #rrggbb.")] = "black",
+    fit: Annotated[str, Field(description="image or animation: contain, cover or fill (stretch is an alias).")] = "contain",
+    dither: Annotated[str, Field(description="image or animation: none, ordered or floyd; omit for none on an image and ordered on an animation.")] = "",
+    key_color: Annotated[str, Field(description="animation only: a colour to knock out to black, or auto to sample it from the frame border.")] = "",
     frame: Annotated[str, Field(description=f"Which frames: N, N-M or all; omit for the first {MAX_FRAMES_PER_CALL}.")] = "",
     style: Annotated[str, Field(description="auto, color (a letter per colour) or mono (# for lit).")] = "auto",
 ) -> dict[str, Any]:
@@ -212,14 +222,20 @@ def render(
         return _unknown("render", noun)
     if style not in TEXT_STYLES:
         return _usage("render", noun, f"style must be one of {', '.join(TEXT_STYLES)}")
+    dither = dither or ("ordered" if noun == "animation" else "none")
     profile = _profile()
     studio = PixelAnimationStudio(profile.width, profile.height)
+    budget = _frame_budget(profile)
     try:
         if noun == "text":
             if not value:
                 return _usage("render", noun, "needs value")
             bundle = studio.create_text_bundle(
-                value, scroll=scroll, foreground=foreground, background=background
+                value,
+                scroll=scroll,
+                foreground=foreground,
+                background=background,
+                max_frames=budget if scroll else None,
             )
         elif noun == "pattern":
             if value not in PATTERNS:
@@ -239,11 +255,29 @@ def render(
             if noun == "bundle":
                 bundle = FrameBundle.load(path)
             else:
-                if fit not in FITS:
-                    return _usage("render", noun, f"fit must be one of {', '.join(FITS)}")
+                if fit not in FIT_MODES:
+                    return _usage("render", noun, f"fit must be one of {', '.join(FIT_MODES)}")
                 if dither not in DITHERS:
                     return _usage("render", noun, f"dither must be one of {', '.join(DITHERS)}")
-                bundle = studio.create_image_bundle(path, fit_mode=fit, dither=dither)
+                if noun == "image":
+                    bundle = studio.create_image_bundle(path, fit_mode=FIT_MODES[fit], dither=dither)
+                elif scroll:
+                    bundle = studio.create_scrolling_gif_bundle(
+                        path,
+                        max_frames=budget,
+                        background=background,
+                        dither=dither,
+                        key_color=key_color or None,
+                    )
+                else:
+                    bundle = studio.create_gif_bundle(
+                        path,
+                        max_frames=budget,
+                        fit_mode=FIT_MODES[fit],
+                        background=background,
+                        dither=dither,
+                        key_color=key_color or None,
+                    )
     except (ValueError, OSError) as exc:
         return _fail({"error": f"render {noun}: {exc}"})
     return _rendered(noun, bundle, frame, style)

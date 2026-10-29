@@ -167,9 +167,9 @@ Common render/send flags: `--dry-run`, `--preview PATH` (implies no send), `--bu
 | Verb | Nouns | Returns |
 | --- | --- | --- |
 | `describe` | `panel`, `legend` | Geometry, colours and capability statuses; the character each colour renders as |
-| `render` | `text`, `pattern`, `image`, `bundle` | Each frame as text, one character per pixel (`.` off, `#` lit, or a colour letter) |
+| `render` | `text`, `pattern`, `image`, `animation`, `bundle` | Each frame as text, one character per pixel (`.` off, `#` lit, or a colour letter) |
 
-`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`; it never encodes or sends. Install with `pip install -e '.[mcp]'` and register it with your client:
+`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`: scrolling text and animations (in place or with `scroll`) are trimmed to the same frame budget the CLI sends (79 at 64×16), and `fit` takes the CLI's `contain`, `cover`, and `fill`. It never encodes or sends. Install with `pip install -e '.[mcp]'` and register it with your client:
 
 ```json
 {
