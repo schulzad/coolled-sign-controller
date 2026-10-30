@@ -38,6 +38,29 @@ from .render import (
 TARGET_FUSION_HZ = 62.0
 
 
+def temporal_fusion_warning(metadata: Mapping[str, Any]) -> str | None:
+    """Describe a temporal loop that repeats slower than the fusion rate it targets, else None.
+
+    Such a loop is still compiled so the panel can be overdriven on purpose; this is
+    the message that tells the caller it may flicker.
+    """
+    loop_hz = metadata.get("loop_hz")
+    if metadata.get("pattern") != "temporal_image" or not isinstance(loop_hz, (int, float)):
+        return None
+    fusion_hz = metadata.get("fusion_hz") or TARGET_FUSION_HZ
+    if loop_hz >= fusion_hz:
+        return None
+    speed_ms = metadata.get("coolledx_speed")
+    message = (
+        f"{metadata.get('temporal_subframes')} temporal subframes at {speed_ms} ms each "
+        f"repeat at {loop_hz:g} Hz, below the ~{fusion_hz:g} Hz the panel needs to blend "
+        f"them, so it may flicker"
+    )
+    if speed_ms == 1:
+        message += f"; {int(1000 // fusion_hz)} or fewer subframes stay above it"
+    return message
+
+
 def _thin_to_budget(
     frames: list[Image.Image],
     durations: list[int],
@@ -364,6 +387,9 @@ class PixelAnimationStudio:
         worst-case (1-of-N) pixel above ``target_hz`` -- i.e. ``speed_ms =
         floor(1000 / (target_hz * subframes))`` -- so N=2 lands on the ~8 ms/62 Hz
         operating point measured on hardware. Pass ``speed_ms`` to override.
+        Past ``1000 / target_hz`` subframes (16 at 62 Hz) even the 1 ms floor cannot
+        keep the loop that fast; it is compiled anyway, and
+        :func:`temporal_fusion_warning` reports it from the bundle metadata.
         """
         if subframes < 2:
             raise ValueError("subframes must be >= 2 (use create_image_bundle for a single frame)")
@@ -396,6 +422,7 @@ class PixelAnimationStudio:
                 "temporal_subframes": subframes,
                 "coolledx_speed": speed_ms,
                 "loop_hz": round(1000 / (speed_ms * len(frames)), 1),
+                "fusion_hz": target_hz,
                 "black_point": black_point,
                 "white_point": white_point,
                 "auto_levels": auto_levels,

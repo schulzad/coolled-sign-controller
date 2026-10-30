@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 
 from opensign.contracts import FrameBundle
 
+from .render import threshold_to_panel
 from .studio import PixelAnimationStudio
 
 
@@ -35,6 +36,18 @@ def _expanded_loop(bundle: FrameBundle, images: list[Image.Image]) -> tuple[list
     return images, durations
 
 
+def blend_frames(bundle: FrameBundle) -> Image.Image:
+    """Average a bundle's frames, weighted by hold time: the still a fast loop blends into."""
+    weights = [max(1, duration) for duration in bundle.frame_durations_ms]
+    total = sum(weights)
+    sums = [0] * len(bundle.frames[0])
+    for frame, weight in zip(bundle.frames, weights, strict=True):
+        for index, value in enumerate(frame):
+            sums[index] += value * weight
+    blended = bytes(round(value / total) for value in sums)
+    return Image.frombytes("RGB", (bundle.width, bundle.height), blended)
+
+
 def save_preview(
     bundle: FrameBundle,
     path: str | Path,
@@ -42,9 +55,19 @@ def save_preview(
     scale: int = 16,
     grid: bool = False,
 ) -> Path:
+    """Write a scaled preview: every frame to a ``.gif``, one still to a ``.png``.
+
+    Frames are shown as the panel lights them, each channel on or off at the codec's
+    threshold. The still is the first frame, except for a temporal still, whose
+    subframes exist only to blend: its ``.png`` is their average, the tone the eye
+    should see, because no GIF viewer plays 1 ms subframes fast enough to blend them.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    images = [scale_frame(image, scale=scale, grid=grid) for image in bundle.to_images()]
+    images = [
+        scale_frame(threshold_to_panel(image), scale=scale, grid=grid)
+        for image in bundle.to_images()
+    ]
     images, durations = _expanded_loop(bundle, images)
     suffix = target.suffix.casefold()
     if suffix == ".gif":
@@ -58,7 +81,10 @@ def save_preview(
             options["loop"] = 0
         images[0].save(target, format="GIF", **options)
     elif suffix == ".png":
-        images[0].save(target, format="PNG")
+        if bundle.metadata.get("pattern") == "temporal_image":
+            scale_frame(blend_frames(bundle), scale=scale, grid=grid).save(target, format="PNG")
+        else:
+            images[0].save(target, format="PNG")
     else:
         raise ValueError("Preview output must end in .gif or .png")
     return target

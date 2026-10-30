@@ -168,6 +168,31 @@ def test_play_native_text_dry_run_maps_user_speed() -> None:
     assert result["encoded"]["banner"]["metadata"]["opcode"] == 0x02
 
 
+def test_upload_sets_a_still_to_static_mode_and_leaves_animations_alone() -> None:
+    from opensign.protocol.runtime import ProtocolRuntime
+
+    runtime = ProtocolRuntime(coolledx_profile())
+    still = FrameBundle.from_images([Image.new("RGB", (64, 16), "white")], [100])
+    result = asyncio.run(runtime.upload_frame_bundle(still, execute=False))
+    assert result["encoded"]["metadata"]["opcode"] == 0x03
+    assert result["mode"]["encoded"]["metadata"]["value_encoded"] == 1  # static
+    assert result["mode"]["transfer"]["dry_run"] is True
+
+    animation = asyncio.run(runtime.upload_frame_bundle(_animation_bundle([80, 80]), execute=False))
+    assert "mode" not in animation
+    kept = asyncio.run(runtime.upload_frame_bundle(still, execute=False, still_mode=None))
+    assert "mode" not in kept
+
+
+def test_upload_skips_the_mode_step_for_a_codec_without_one() -> None:
+    from opensign.protocol.runtime import ProtocolRuntime
+
+    bundle = FrameBundle.from_images([Image.new("RGB", (2, 1), "red")], [100])
+    result = asyncio.run(ProtocolRuntime(literal_profile()).upload_frame_bundle(bundle))
+    assert result["transfer"]["success"] is True
+    assert "mode" not in result
+
+
 def test_coolledx_frame_bundle_requests_ack_pacing() -> None:
     codec = select_codec(coolledx_profile(), allow_experimental=False)
     bundle = FrameBundle.from_images([Image.new("RGB", (64, 16), "white")], [100])
