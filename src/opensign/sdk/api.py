@@ -37,7 +37,7 @@ class ImageRequest(BaseModel):
     background: str = "black"
     duration_ms: int = Field(default=1000, ge=1, le=600000)
     dither: str = Field(default="none", pattern="^(none|ordered|floyd)$")
-    temporal: int = Field(default=0, ge=0, le=32)
+    temporal: int = Field(default=0, ge=0, le=255)
     auto_levels: bool = False
     black_level: int = Field(default=0, ge=0, le=254)
     white_level: int = Field(default=255, ge=1, le=255)

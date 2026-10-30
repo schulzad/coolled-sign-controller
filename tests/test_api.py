@@ -105,6 +105,27 @@ def test_api_animation_image_temporal_and_bundle(tmp_path: Path) -> None:
     assert bad.status_code == 400
 
 
+def test_api_image_returns_a_fusion_warning_but_still_plays(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from opensign.sdk.api import create_app
+
+    profile_path = DeviceProfile(default_device_profile()).save(tmp_path / "profile.json")
+    client = TestClient(create_app(profile_path=profile_path, artifact_dir=None))
+    request = {"panel_id": "desk-sign", "image_base64": _tiny_png_base64()}
+
+    fused = client.post("/image", json={**request, "temporal": 16})
+    assert fused.status_code == 200
+    assert "warnings" not in fused.json()
+
+    # Above the old cap of 32 and too slow to fuse: still played, with a warning.
+    overdriven = client.post("/image", json={**request, "temporal": 40})
+    assert overdriven.status_code == 200
+    assert overdriven.json()["bundle"]["frames"] == 40
+    assert "40 temporal subframes" in overdriven.json()["warnings"][0]
+
+
 def test_api_text_native_scroll_and_animation_scroll(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient

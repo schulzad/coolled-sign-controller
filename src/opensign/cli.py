@@ -26,11 +26,12 @@ import opensign.protocol  # noqa: F401  (registers bundled device codecs)
 from opensign.animation.cache import RenderBundleCache, default_render_cache_dir
 from opensign.animation.preview import save_preview
 from opensign.animation.render import render_wide_text
-from opensign.animation.studio import PixelAnimationStudio
+from opensign.animation.studio import PixelAnimationStudio, temporal_fusion_warning
 from opensign.contracts import DeviceProfile, FrameBundle
 from opensign.protocol.codec import CodecError
 from opensign.protocol.codecs.coolledx import (
     MODE_LEFT,
+    MODE_STATIC,
     PIXEL_BYTES_MAX,
     USER_SCROLL_SPEED_MAX,
     USER_SCROLL_SPEED_MIN,
@@ -243,6 +244,16 @@ def _print_transfer_summary(result: dict, *, elapsed_s: float | None = None) -> 
     timing = _timing_line(transfer, elapsed_s)
     if timing:
         lines.append(timing)
+    mode = result.get("mode")
+    if mode:
+        value = mode["encoded"].get("metadata", {}).get("value_encoded")
+        label = f"{value} (static)" if value == MODE_STATIC else str(value)
+        sent = mode.get("transfer")
+        lines.append(
+            f"then mode={label} success={sent.get('success')}"
+            if sent
+            else f"then mode={label} not sent (the upload did not finish)"
+        )
     for error in transfer.get("errors", []):
         lines.append(f"error: {error}")
     if distinct:
@@ -254,7 +265,7 @@ def _print_transfer_summary(result: dict, *, elapsed_s: float | None = None) -> 
 
 
 def _print_image_diagnostics(bundle) -> None:
-    """Surface levels + which channels can actually light, on stderr.
+    """Surface levels, which channels can actually light, and a too-slow temporal loop, on stderr.
 
     Auto-levels picks values the user never sees otherwise, and a low-contrast
     source often can only render one colour (red/blue below the 1-bit threshold),
@@ -277,6 +288,9 @@ def _print_image_diagnostics(bundle) -> None:
                 f"(try --auto-levels, or raise --white-level)",
                 file=sys.stderr,
             )
+    warning = temporal_fusion_warning(meta)
+    if warning:
+        print(f"warning: {warning}", file=sys.stderr)
 
 
 def _print_native_text_summary(result: dict, *, elapsed_s: float | None = None) -> None:
@@ -614,7 +628,9 @@ def _cmd_image(argv: list[str]) -> None:
         help=(
             "Temporal colour: render the still as a fast N-subframe loop (N>=2) so "
             "duty cycle fakes intermediate colours. Relies on the panel's flicker "
-            "fusion (~62 Hz); ignores --dither. 0 disables (default)."
+            "fusion (~62 Hz); ignores --dither. 0 disables (default). Up to 16 stays "
+            "above fusion; more still renders, with a warning. A --preview .png shows "
+            "the subframes blended (what the eye should see); a .gif shows them raw."
         ),
     )
     parser.add_argument(

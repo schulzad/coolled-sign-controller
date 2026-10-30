@@ -459,7 +459,7 @@ Module("FeatureBoard") {
     evidence_basis: |
       - The 0x04 speed field is a per-frame hold in milliseconds (speed sweep 64 / 512 / 2000 on the reference panel, 2026-07-13).
       - The 0x04 payload ceiling is 30,720 B including the 27-byte header: 79 frames at 64x16 were accepted with 238/238 success acks, and 80 frames were rejected on packet 0 with status 0x04 DATA_LENGTH_ERROR (2026-08-15).
-      - Temporal (FRC) colour only exists on the panel; previews show the binarized subframes.
+      - Temporal (FRC) colour only exists on the panel; a .gif preview shows the binarized subframes, and a .png preview their ideal blend, which the panel only approximates.
       - Per-chunk acks average 153 ms over the first 30 chunks of an upload, then 215 to 245 ms for the rest, with single acks still as fast as ~118 ms throughout (238 chunks in 51.1 s, 215 ms mean, 2026-10-29).
     open_questions: |
       - Does the same 30,720-byte ceiling govern 0x02 banners? An independent 64x16 CoolLEDX controller publicly reports 0x02 uploads of 30,695 B succeeding, which fits.

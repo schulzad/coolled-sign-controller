@@ -13,7 +13,7 @@ from PIL import Image
 
 from opensign.animation.preview import save_preview
 from opensign.animation.render import apply_orientation, image_from_base64, render_wide_text
-from opensign.animation.studio import PixelAnimationStudio
+from opensign.animation.studio import PixelAnimationStudio, temporal_fusion_warning
 from opensign.contracts import ContractError, DeviceProfile, FrameBundle, utc_now_iso
 from opensign.protocol.codec import CodecError
 from opensign.protocol.codecs.coolledx import MODE_LEFT, PIXEL_BYTES_MAX
@@ -428,7 +428,11 @@ class OpenSignRuntime:
                 white_point=white_level,
                 **self._orientation(state),
             )
-        return await self.play_bundle(panel_id, bundle, execute=execute, request_id=request_id)
+        result = await self.play_bundle(panel_id, bundle, execute=execute, request_id=request_id)
+        warning = temporal_fusion_warning(bundle.metadata)
+        if warning:
+            result["warnings"] = [warning]
+        return result
 
     async def play_animation_base64(
         self,

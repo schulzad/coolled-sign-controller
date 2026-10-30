@@ -275,7 +275,7 @@ Module("DeviceProfileLedger") {
           "static_image (0x03), stored_animation (0x04), and native_text_scroll (0x02) are independent claims: a verified static upload never implies verified animation or verified text scroll.",
           "The display palette is derived from the decoded color_mode and handed to the renderer; device colour knowledge never lives in PixelFramePipeline.",
           "The native single-frame palette and the temporal-FRC perceived gamut are distinct: the perceived volume is luminance-limited and time-averaged, never advertised as native single-frame colours.",
-          "The flicker-fusion ceiling (hardware.flicker_fusion_hz) is a measured, evidence-backed device fact like the 30 KiB frame buffer; temporal rendering must be timed above it and is refused when it is unknown.",
+          "The flicker-fusion ceiling (hardware.flicker_fusion_hz) is a measured, evidence-backed device fact like the 30 KiB frame buffer; temporal rendering is timed above it where it can be (a request with too many subframes to be is warned about, not refused) and is refused when it is unknown.",
           "Discovery confidence is capped at 0.95 -- passive observation never yields certainty.",
           "Active write/notify characteristics are set by explicit decision, not by discovery.",
           "Codec selection is gated on allow_experimental, not on write-vs-plan: the runtime admits experimental for both dry-run and physical delivery (a controlled live test is how experimental earns verified) and the execute flag alone gates a real write; the opt-in strict gate (allow_experimental=false) still admits only verified and requires replay_safe.",

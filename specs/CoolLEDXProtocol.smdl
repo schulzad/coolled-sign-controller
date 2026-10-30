@@ -382,6 +382,7 @@ Module("CoolLEDXProtocol") {
           "Input frames must already be quantized to the panel palette; packing is 1 bit per channel (8 wire color states) and does not itself dither -- temporal (FRC) stills arrive pre-binarized as one 0x04 loop.",
           "Native text scroll is a single wide bitmap under opcode 0x02: byte-identical to a static image (0x03) plus an 81-byte text header, with banner width carried implicitly by the pixel-byte count; the firmware scrolls it, so the host never rasterizes a per-column flipbook.",
           "Text movement and cadence are separate control commands -- mode (0x06; Mode enum, 2=left verified 2026-07-14) and speed (0x07; byte, higher=faster verified 2026-07-14; opposite polarity from animation ms/frame) -- never fields of the text payload.",
+          "The panel keeps its last mode across uploads, and a still (0x03) obeys it: after native text scroll left mode=left, a plain image scrolled (2026-10-30). So ProtocolRuntime.upload_frame_bundle follows every single-frame upload with mode=1 (static) on the same session, after the image, as play_native_text sends mode after its banner. Animations (0x04) have been recorded playing in place, so they get no mode step. Confirmed on the panel 2026-10-30.",
           "Frame-transfer EncodedPayloads carry flow_control.await_ack=true; control payloads carry an empty flow_control.",
           "The codec supplies a per-chunk ack decoder (0x00 success / 0x06 checksum-error NAK) on frame-transfer EncodedPayloads; GuardedTransport uses it to confirm each chunk and re-send a NAKed packet. The 0x06 NAK path is unit-tested but not yet exercised on hardware.",
           "This module never performs BLE writes; delivery and the ack handshake belong to GuardedTransport.",
@@ -426,6 +427,10 @@ Module("CoolLEDXProtocol") {
         (0,1,8,32,64,128,200,255): higher byte = faster native scroll; 255 is fast
         but readable. Polarity is the OPPOSITE of animation coolledx_speed (ms/frame).
         User-facing CLI maps 0..10 linearly onto 0..255.
+      - Still mode (0x06, mode=1 STATIC) confirmed 2026-10-30: with the panel left in
+        mode=left by native text, a plain still scrolled; once upload_frame_bundle
+        followed single-frame uploads with mode=1 on the same session, a later still
+        stayed in place. Recorded in the local profile's evidence.
     open_work: |
       - Confirm power/switch (0x09) vs power_on (0x13)/power_down (0x12) semantics.
       - Exercise the 0x06 checksum-error NAK path on hardware: the ack decoder (decode_coolledx_ack, 0x00/0x06) and GuardedTransport's NAK re-send are implemented and unit-tested, but only 0x00 success acks have been observed on a real panel.

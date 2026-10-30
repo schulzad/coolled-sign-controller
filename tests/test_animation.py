@@ -12,7 +12,7 @@ from opensign.animation.render import (
     render_test_pattern,
     temporal_dither_frames,
 )
-from opensign.animation.studio import PixelAnimationStudio
+from opensign.animation.studio import PixelAnimationStudio, temporal_fusion_warning
 
 
 def _write_gif(path: Path, *, frames: int, size: tuple[int, int] = (16, 8), duration: int = 120) -> Path:
@@ -208,6 +208,45 @@ def test_create_temporal_image_bundle_defaults_to_fused_speed() -> None:
     # N=2 -> speed_ms = floor(1000 / (62 * 2)) = 8ms, matching the ~62 Hz probe result
     assert bundle.metadata["coolledx_speed"] == 8
     assert bundle.frame_durations_ms == [8, 8]
+
+
+def test_dither_none_preview_shows_what_the_panel_lights(tmp_path: Path) -> None:
+    bundle = PixelAnimationStudio(64, 16).create_image_bundle(
+        Image.new("RGB", (64, 16), (100, 200, 128)), dither="none"
+    )
+    assert (100, 200, 128) == tuple(bundle.frames[0][:3])  # midtones wait for the codec
+    preview = Image.open(save_preview(bundle, tmp_path / "still.png", scale=1)).convert("RGB")
+    assert set(preview.getdata()) == {(0, 255, 255)}  # each channel on only above 127
+
+
+def test_temporal_png_preview_is_the_blend_of_its_subframes(tmp_path: Path) -> None:
+    grey = Image.new("RGB", (64, 16), (128, 128, 128))
+    studio = PixelAnimationStudio(64, 16)
+    temporal = studio.create_temporal_image_bundle(grey, subframes=4)
+    assert set(temporal.frames[0]) <= {0, 255}  # each subframe is binary
+    blend = Image.open(save_preview(temporal, tmp_path / "blend.png", scale=1))
+    assert set(blend.tobytes()) == {128}  # but they average back to the grey
+
+    animation = studio.create_two_frame_bundle()
+    first = Image.open(save_preview(animation, tmp_path / "first.png", scale=1))
+    as_lit = bytes(255 if value > 127 else 0 for value in animation.frames[0])
+    assert first.convert("RGB").tobytes() == as_lit
+
+
+def test_temporal_bundle_warns_only_when_the_loop_cannot_fuse() -> None:
+    src = Image.new("RGB", (64, 16), (100, 150, 60))
+    studio = PixelAnimationStudio(64, 16)
+    fused = studio.create_temporal_image_bundle(src, subframes=16)
+    assert (fused.metadata["loop_hz"], fused.metadata["fusion_hz"]) == (62.5, 62.0)
+    assert temporal_fusion_warning(fused.metadata) is None
+
+    over = studio.create_temporal_image_bundle(src, subframes=17)
+    assert len(over.frames) == 17  # warned, never refused
+    warning = temporal_fusion_warning(over.metadata)
+    assert warning is not None
+    assert "17 temporal subframes at 1 ms each" in warning
+    assert "16 or fewer subframes stay above it" in warning
+    assert temporal_fusion_warning({"pattern": "image"}) is None
 
 
 def test_resample_for_matches_colour_reduction_intent() -> None:

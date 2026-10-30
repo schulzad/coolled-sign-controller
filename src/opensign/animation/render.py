@@ -620,6 +620,15 @@ def reachable_channels(image: Image.Image, *, threshold: int = 127) -> list[str]
     ]
 
 
+def threshold_to_panel(image: Image.Image, *, threshold: int = 127) -> Image.Image:
+    """The image as the panel lights it: each channel full on above ``threshold``, else off.
+
+    Mirrors coolledx ``_pixel_bitplanes``' ``> 127``. A ``dither="none"`` frame keeps its
+    midtones until the codec packs it, so this is what makes its preview honest.
+    """
+    return image.convert("RGB").point(lambda value: 255 if value > threshold else 0)
+
+
 def quantize_to_panel(image: Image.Image, mode: str = "ordered") -> Image.Image:
     """Reduce an RGB image to the panel's 8-colour gamut (1 bit per channel).
 

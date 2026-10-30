@@ -101,21 +101,23 @@ Module("GuardedTransport") {
       }
 
       Function("write_chunk_with_retry") {
-        description: "Write one chunk to the characteristic (write-without-response unless the profile requests response), retrying up to retry_limit on transient failure. A permanent failure records a write error and aborts the transfer (host failure, distinct from a missing ack)."
+        description: "Write one chunk to the characteristic (write-without-response unless the profile requests response), retrying up to retry_limit on transient failure. Each attempt is bounded by write_timeout, because a write-without-response stack whose queue has stalled (macOS CoreBluetooth when the device stops draining) otherwise blocks forever. Every successful write is followed by the profile's inter_chunk_delay_ms, paced or not, so a long burst cannot overrun the controller's send queue. A permanent failure records a write error and aborts the transfer (host failure, distinct from a missing ack)."
         metaphor: "Re-posting a sheet that bounced, then giving up if it keeps bouncing."
         input_parameters: {
           chunk: { type: "Chunk", description: "The chunk to write.", required: true },
-          retry_limit: { type: "int", description: "Max retries.", required: false, default: 3 }
+          retry_limit: { type: "int", description: "Max retries.", required: false, default: 3 },
+          write_timeout: { type: "float", description: "Seconds one write attempt may take before it counts as failed.", required: false, default: 5.0 }
         }
         output_format: {
           written: "bool True if the write succeeded.",
           error: "string|null Write failure detail, if any."
         }
         implementation: |
-          def write_chunk_with_retry(chunk, retry_limit=3):
+          def write_chunk_with_retry(chunk, retry_limit=3, write_timeout=5.0):
               for attempt in range(retry_limit + 1):
                   try:
-                      write_gatt_char(write_char, chunk.data, response=response)
+                      wait_for(write_gatt_char(write_char, chunk.data, response=response), write_timeout)
+                      sleep_interchunk()                       # every write, paced or not
                       return True, None
                   except Exception as exc:
                       if attempt >= retry_limit:
@@ -147,37 +149,40 @@ Module("GuardedTransport") {
       }
 
       Function("match_ack") {
-        description: "Decode a device notification into an acknowledgement using an optional codec-supplied decoder carried on flow_control, so the transport stays device-agnostic and never hardcodes opcodes. A decoder yields {index, is_success, is_nak, status} -- for CoolLEDX, status 0x00 = success and 0x06 = checksum error. Without a decoder the transport can only record that *some* notification arrived (status unknown); it must never report that as verified success."
+        description: "Decode a device notification into an acknowledgement using an optional codec-supplied decoder carried on flow_control, so the transport stays device-agnostic and never hardcodes opcodes. A decoder yields {index, status, is_success, is_nak, is_fatal} -- for CoolLEDX, status 0x00 = success, 0x06 = checksum error, and the other error statuses (0x01-0x05, or a malformed frame) are fatal. send_packets decodes the newest notification after each packet; under stop-and-wait that is the packet's own ack, so the decoded index is reported but not compared. Without a decoder the transport can only record that *some* notification arrived (status unknown); it must never report that as verified success."
         metaphor: "Reading the signature to see whether it says 'received' or 'return to sender'."
         input_parameters: {
           notification: { type: "bytes", description: "Raw notification from the notify channel.", required: true },
-          expected_index: { type: "int", description: "Packet index awaiting an ack.", required: true },
           decoder: { type: "callable|null", description: "Codec-supplied ack decoder from flow_control.ack_decoder.", required: false }
         }
         output_format: {
-          matched: "bool True if this notification is the ack for expected_index.",
-          is_success: "bool Decoded success (e.g. 0x00).",
+          index: "int|null Packet index the device acknowledged, when decodable.",
+          status: "int|null Raw status byte, or null when unknown.",
+          is_success: "bool Decoded success (e.g. 0x00), or true when there is no decoder.",
           is_nak: "bool Decoded negative-ack / checksum error (e.g. 0x06).",
-          status: "int|null Raw status byte, or null when undecodable."
+          is_fatal: "bool Decoded error that no re-send fixes; stops the transfer."
         }
         implementation: |
-          def match_ack(notification, expected_index, decoder=None):
+          def match_ack(notification, decoder=None):
               if decoder is None:
-                  return True, False, False, None      # arrived, but status is unknown
-              d = decoder(notification)
-              return (d.index == expected_index), d.is_success, d.is_nak, d.status
+                  return {'index': None, 'status': None, 'is_success': True,   # arrived, status unknown
+                          'is_nak': False, 'is_fatal': False}
+              return decoder(notification)
         tags: ["device-agnostic", "guarded"]
       }
 
       Function("send_packets") {
-        description: "Orchestrate delivery: chunk packets, write chunks in order, and after each packet either wait for a device ack (when await_ack) or apply the inter-chunk delay. When the codec supplies flow_control.ack_decoder, each packet completes only on a decoded success; a decoded checksum-error (NAK) re-sends that packet up to nak_retry_limit, and an undecodable notification is arrived-but-unverified (never counted as success). Returns a TransferResult separating host success (all writes accepted) from decoded ack telemetry (acks_received / naks / ack_timeouts / nak_retries) and this-call notifications."
+        description: "Orchestrate delivery: chunk packets, write chunks in order (each write bounded and followed by the inter-chunk delay, see write_chunk_with_retry), and after each packet wait for a device ack when await_ack is set. When the codec supplies flow_control.ack_decoder, each packet completes only on a decoded success; a decoded checksum-error (NAK) re-sends that packet up to nak_retry_limit, any other decoded error status stops the transfer with that packet's error, and an undecodable notification is arrived-but-unverified (never counted as success). After max_consecutive_ack_timeouts missed acks in a row the device has evidently stopped acking, so the rest of the transfer goes delay-paced instead of waiting out every timeout. An optional progress(delivered, total) callback, counted in packets, hears 0 before the first packet and each packet once it lands; a packet the panel rejects is never reported as delivered. Returns a TransferResult separating host success (all writes accepted) from decoded ack telemetry (acks_received / naks / ack_timeouts / nak_retries), this call's notifications, and the transfer's duration_ms."
         metaphor: "Mailing all pages, reading each signature, re-posting the ones stamped 'return to sender', and tallying the receipts."
         input_parameters: {
           packets: { type: "array[bytes]", description: "Framed packets.", required: true },
           await_ack: { type: "bool", description: "Wait for a per-packet ack (from flow_control).", required: false, default: false },
           ack_timeout: { type: "float", description: "Seconds to wait per ack.", required: false, default: 2.0 },
           retry_limit: { type: "int", description: "Per-chunk write retries.", required: false, default: 3 },
-          nak_retry_limit: { type: "int", description: "Re-sends of a packet whose ack decoded as a checksum error.", required: false, default: 2 }
+          nak_retry_limit: { type: "int", description: "Re-sends of a packet whose ack decoded as a checksum error.", required: false, default: 2 },
+          write_timeout: { type: "float", description: "Seconds one chunk write may take (see write_chunk_with_retry).", required: false, default: 5.0 },
+          max_consecutive_ack_timeouts: { type: "int", description: "Missed acks in a row before the rest of the transfer stops waiting for acks.", required: false, default: 6 },
+          progress: { type: "callable|null", description: "progress(delivered, total) in packets. A dry run delivers nothing, so it never calls it.", required: false }
         }
         output_format: {
           success: "bool Every chunk was written (host-level).",
@@ -188,30 +193,42 @@ Module("GuardedTransport") {
           nak_retries: "int Packets re-sent after a decoded NAK.",
           bytes_sent: "int Total bytes written.",
           notifications: "array[object] Notifications received during this call.",
-          errors: "array[string] Write failures (empty on a clean host transfer)."
+          errors: "array[string] Write failures and fatal ack statuses (empty on a clean transfer).",
+          duration_ms: "float|null Wall time of the transfer itself, connecting excluded; null on a dry run."
         }
         implementation: |
-          def send_packets(packets, await_ack=False, ack_timeout=2.0, retry_limit=3, nak_retry_limit=2):
+          def send_packets(packets, await_ack=False, ack_timeout=2.0, retry_limit=3, nak_retry_limit=2,
+                           write_timeout=5.0, max_consecutive_ack_timeouts=6, progress=None):
               size = choose_chunk_size(profile, write_char)[0]
               decoder = flow_control.get('ack_decoder')      # codec-supplied, optional
               pace = await_ack and notify_subscribed
+              started = time.monotonic()
+              if progress: progress(0, len(packets))
               for pi, packet in enumerate(packets):
                   for attempt in range(nak_retry_limit + 1):
                       baseline = len(notifications)
-                      ok, err = write_all_chunks(packet, size, retry_limit)  # per-chunk write_chunk_with_retry
+                      ok, err = write_all_chunks(packet, size, retry_limit, write_timeout)  # write_chunk_with_retry
                       if not ok:
                           record_error(err); return failure
                       if not pace:
-                          sleep_interchunk(); break                # unpaced: fire and move on
+                          break                                    # unpaced: move on
                       if not await_ack(baseline, ack_timeout):
-                          ack_timeouts += 1; break                 # soft miss, no ack in time
-                      matched, is_success, is_nak, status = match_ack(latest(), pi, decoder)
-                      if is_nak and attempt < nak_retry_limit:
+                          ack_timeouts += 1; missed_in_a_row += 1
+                          if missed_in_a_row >= max_consecutive_ack_timeouts:
+                              pace = False                         # device went quiet: finish delay-paced
+                          break
+                      missed_in_a_row = 0
+                      ack = match_ack(latest(), decoder)
+                      if ack.is_fatal:
+                          record_error(ack.status); return failure  # e.g. 0x04 DATA_LENGTH_ERROR
+                      if ack.is_nak and attempt < nak_retry_limit:
                           nak_retries += 1; continue               # re-send this packet
-                      acks_received += 1 if (is_success or status is None) else 0
-                      naks += 1 if is_nak else 0
+                      acks_received += 1 if (ack.is_success or ack.status is None) else 0
+                      naks += 1 if ack.is_nak else 0
                       break
-              return TransferResult(success=host_ok, acks_received=..., naks=..., ack_timeouts=..., nak_retries=...)
+                  if progress: progress(pi + 1, len(packets))      # only once the packet landed
+              return TransferResult(success=host_ok, acks_received=..., naks=..., ack_timeouts=..., nak_retries=...,
+                                    duration_ms=(time.monotonic() - started) * 1000)
         tags: ["side-effect", "guarded", "verified-hardware"]
       }
 
@@ -268,9 +285,10 @@ Module("GuardedTransport") {
           "The transport never interprets packet contents -- it moves bytes for whatever codec produced them.",
           "Chunk size is chosen conservatively and its provenance is always recorded.",
           "Ack pacing is engaged only when the encoded payload's flow_control.await_ack is set and a notify channel is subscribed.",
-          "When the codec supplies an ack decoder, a packet completes only on a decoded success; a decoded checksum-error re-sends that packet (nak_retries), and an undecodable notification is arrived-but-unverified, never success.",
+          "When the codec supplies an ack decoder, a packet completes only on a decoded success; a decoded checksum-error re-sends that packet (nak_retries), any other decoded error status stops the transfer, and an undecodable notification is arrived-but-unverified, never success.",
           "A missing ack is a soft signal (ack_timeouts); host-write success and ack-verified success are reported as distinct signals, so an unverified or NAK-exhausted transfer is never mislabelled ack-verified.",
-          "Large multi-frame animation uploads are serialized per panel and bounded by a transfer deadline with progress and cancellation.",
+          "A long upload cannot hang: every write is bounded by write_timeout, and after max_consecutive_ack_timeouts missed acks in a row the rest of the transfer stops waiting for acks. There is no overall transfer deadline, cancellation, or per-panel serialization.",
+          "Progress counts delivered packets only: a packet the panel rejects is never reported as delivered, and a dry run never reports progress.",
           "Host write success, per-chunk ack telemetry, and display confirmation are three separate truths.",
           "The BLE session is always torn down after a transfer attempt."
         ]
@@ -285,8 +303,8 @@ Module("GuardedTransport") {
       - BLE connect / notify subscription / disconnect lifecycle.
       - Conservative chunk-size selection and packet chunking.
       - The per-packet ack handshake (count+event, race-safe) driven by flow_control, incl. decoding acks via a codec-supplied decoder and re-sending NAKed packets.
-      - TransferResult telemetry: host success vs acks_received / naks / ack_timeouts / nak_retries.
-      - Serializing per-panel uploads and enforcing a transfer deadline with progress/cancellation for large animations.
+      - TransferResult telemetry: host success vs acks_received / naks / ack_timeouts / nak_retries, plus the transfer's duration_ms.
+      - Keeping a long upload moving and visible: bounded writes, the fall back to delay pacing when a device stops acking, and per-packet progress(delivered, total) for callers such as the CLI's live upload line.
       - Execute gating on a caller-supplied flag: DryRunTransport (plan) when execute=false vs BleakTransport (writes) when execute=true; the flag's default is set at the entry point (CLI write-by-default, API render-only), never here.
     delegates: |
       - Packet contents, opcodes, framing, and the flow_control values to the device codec (CoolLEDXProtocol).
@@ -296,7 +314,7 @@ Module("GuardedTransport") {
       - The opensign-send bundle path (now write-by-default; --dry-run produces the plan) drives the panel end to end, including the native text-scroll banner (0x02) verified 2026-07-14.
     open_work: |
       - Exercise NAK re-send on hardware: the codec-supplied ack decoder is now wired into send_packets (match_ack / _classify_ack) and a decoded 0x06 checksum error re-sends the packet up to nak_retry_limit (naks / nak_retries in TransferResult), but only 0x00 success acks have been observed on a real panel, so the NAK path is unexercised.
-      - Tune the animation transfer deadline / progress / cancellation for ~500-chunk uploads.
+      - Per-panel upload serialization, an overall transfer deadline, and cancellation are not built: a long upload is bounded only per write and per ack. Progress reporting shipped 2026-10-29.
       - Reconnect policy (profile.connection.reconnect_policy) is declared but not yet exercised.
   }
 }

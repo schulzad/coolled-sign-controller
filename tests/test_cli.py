@@ -3,6 +3,7 @@ import io
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from opensign import cli
 from opensign.animation.studio import PixelAnimationStudio
@@ -208,6 +209,14 @@ def test_transfer_summary_reports_actual_timing(capsys) -> None:
     assert "total=10.9s transfer=8.6s per_packet=232ms" in capsys.readouterr().err
 
 
+def test_transfer_summary_reports_the_still_mode_step(capsys) -> None:
+    mode = {"encoded": {"metadata": {"value_encoded": 1}}, "transfer": {"success": True}}
+    cli._print_transfer_summary({"encoded": {}, "transfer": {"success": True}, "mode": mode})
+    assert "then mode=1 (static) success=True" in capsys.readouterr().err
+    cli._print_transfer_summary({"transfer": {}, "mode": {**mode, "transfer": None}})
+    assert "then mode=1 (static) not sent" in capsys.readouterr().err
+
+
 def test_timing_line_skips_dry_runs_and_rates_for_stopped_transfers() -> None:
     assert cli._timing_line({"duration_ms": None}, 0.1) is None
     stopped = {"success": False, "packet_count": 37, "duration_ms": 1200.0}
@@ -298,3 +307,30 @@ def test_finish_remembers_the_panel_rate_and_reuses_it(tmp_path: Path, monkeypat
     # The first upload has nothing to go on; the second starts from the first's rate.
     assert handed[0] is None
     assert handed[1] is not None and handed[1] > 0
+
+
+def test_image_warns_when_the_temporal_loop_is_too_slow_but_still_sends(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    sent: list = []
+
+    class FakeRuntime:
+        def __init__(self, _profile: DeviceProfile):
+            pass
+
+        async def upload_frame_bundle(self, bundle, **_options):
+            sent.append(bundle)
+            return {"encoded": {}, "transfer": {"success": True, "dry_run": True}}
+
+    monkeypatch.setattr(cli, "ProtocolRuntime", FakeRuntime)
+    source = tmp_path / "grey.png"
+    Image.new("RGB", (64, 16), (128, 128, 128)).save(source)
+    profile = DeviceProfile(default_device_profile()).save(tmp_path / "profile.json")
+    base = [str(source), "--profile", str(profile), "--dry-run", "--cache-dir", str(tmp_path)]
+
+    cli._cmd_image([*base, "--temporal", "20"])
+    assert len(sent[-1].frames) == 20  # warned, still sent
+    assert "warning: 20 temporal subframes at 1 ms each repeat at 50 Hz" in capsys.readouterr().err
+
+    cli._cmd_image([*base, "--temporal", "16"])
+    assert "warning:" not in capsys.readouterr().err

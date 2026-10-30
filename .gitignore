@@ -19,4 +19,5 @@ evidence/**/*.btsnoop
 evidence/**/*.log
 !evidence/**/.gitkeep
 
-examples/downloaded/
+examples/downloaded/*
+!examples/downloaded/gengar.jpg
