@@ -47,7 +47,7 @@
       "source": "src/opensign/protocol/transport.py, packet.py, runtime.py::_deliver",
       "status": "hardware-verified (acks_received=4/4 on a frame)",
       "delegates_to": ["CoolLEDXProtocol", "DeviceProfileLedger"],
-      "summary": "Device-agnostic BLE delivery: chunk sizing, dry-run plan vs writes, race-safe per-packet ack handshake with a codec-supplied ack decoder and NAK re-send, host-success vs ack telemetry, per-panel serialization + transfer deadline, execute gating."
+      "summary": "Device-agnostic BLE delivery: chunk sizing, dry-run plan vs writes, race-safe per-packet ack handshake with a codec-supplied ack decoder and NAK re-send, host-success vs ack telemetry, bounded writes with a delay-paced fallback when acks stop, per-packet progress and transfer timing, execute gating (no per-panel serialization or overall transfer deadline yet)."
     },
     {
       "module": "PixelFramePipeline",
@@ -119,7 +119,7 @@
       "id": "W6",
       "title": "Temporal colour (frame-rate control)",
       "modules": ["PixelFramePipeline", "DeviceProfileLedger", "SignControlService"],
-      "outcome": "A still expands into N binarized subframes (spatiotemporal ordered dither) played on 0x04 above the measured ~62 Hz fusion ceiling so per-pixel duty cycle reads as intermediate colour; levels (black/white point) tame dark sources. Implemented (render.temporal_dither_frames/apply_levels, studio.create_temporal_image_bundle, coolled image --temporal/--black-level/--white-level, scripts/flicker_probe.py, tests); remaining: per-channel perceptual calibration and a target-RGB -> per-channel-duty gamut map, plus recording hardware.flicker_fusion_hz in the profile."
+      "outcome": "A still expands into N binarized subframes (spatiotemporal ordered dither) played on 0x04 above the measured ~62 Hz fusion ceiling so per-pixel duty cycle reads as intermediate colour; levels (black/white point) tame dark sources. Implemented (render.temporal_dither_frames/apply_levels, studio.create_temporal_image_bundle, coolled image --temporal/--black-level/--white-level, scripts/flicker_probe.py, tests). Past 16 subframes the 1 ms hold floor cannot keep the loop above fusion; it renders anyway with a warning (studio.temporal_fusion_warning, CLI and API) so the panel can be overdriven on purpose. A per-pixel phase ramp aimed at the line that crawls down the panel near 79 subframes was rejected on hardware (2026-10-29: it draws diagonal streaks; see PixelFramePipeline open_work). Remaining: per-channel perceptual calibration and a target-RGB -> per-channel-duty gamut map, plus recording hardware.flicker_fusion_hz in the profile."
     }
   ],
   "shared_invariants": [
@@ -132,6 +132,6 @@
     "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device colour knowledge never leaks into compilation.",
     "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device payload limit, header included (79 frames at 64x16), plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated.",
     "The native single-frame palette and the temporal-FRC perceived gamut are distinct: temporal dithering time-averages native colours into a larger but luminance-limited perceived volume, never a new single-frame colour.",
-    "The flicker-fusion ceiling is a measured, evidence-backed device fact; a temporal (FRC) loop must be timed above it (N * speed_ms <= 1000 / fusion_hz) or it reads as visible flicker instead of a fused tone."
+    "The flicker-fusion ceiling is a measured, evidence-backed device fact; a temporal (FRC) loop is timed above it where it can be (N * speed_ms <= 1000 / fusion_hz), or it reads as visible flicker instead of a fused tone. A loop that cannot be (more than 16 subframes at 62 Hz) is warned about, never refused, so the panel can be overdriven on purpose."
   ]
 }

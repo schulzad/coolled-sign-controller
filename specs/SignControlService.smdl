@@ -41,13 +41,13 @@ Module("SignControlService") {
       }
 
       Directive("/play_image") {
-        description: "Fit an image (or base64 image) to the panel and play it. As a single static frame by default, or -- when temporal >= 2 -- as a fast temporal-colour (frame-rate-control) subframe loop that fakes intermediate colours (compiled by PixelFramePipeline.compile_temporal_still). Levels (black/white point) apply to both paths."
+        description: "Fit an image (or base64 image) to the panel and play it. As a single static frame by default, or -- when temporal >= 2 -- as a fast temporal-colour (frame-rate-control) subframe loop that fakes intermediate colours (compiled by PixelFramePipeline.compile_temporal_still). Levels (black/white point) apply to both paths. A temporal loop too slow to fuse (more than 16 subframes at 62 Hz) is still played, and the response carries the reason in warnings."
         metaphor: "Calling an image cue -- held, or fanned into a flicker so the eye sees shades the panel can't hold."
         parameters: {
           panel_id: { type: "string", description: "Target panel.", required: true },
           image: { type: "Image|string", description: "Image or base64 string.", required: true },
           fit_mode: { type: "string", description: "contain | cover | stretch.", required: false, default: "contain" },
-          temporal: { type: "int", description: "Temporal subframes (N >= 2) for FRC colour; 0 = single static frame.", required: false, default: 0 },
+          temporal: { type: "int", description: "Temporal subframes (N >= 2) for FRC colour; 0 = single static frame. Accepted up to the one-byte frame count (255), like the CLI; the codec's frame budget (79 at 64x16) still applies.", required: false, default: 0 },
           black_level: { type: "int", description: "Levels: crush channel values <= this to off before dithering (0-254).", required: false, default: 0 },
           white_level: { type: "int", description: "Levels: lift channel values >= this to full on (1-255).", required: false, default: 255 },
           execute: { type: "bool|null", description: "Override the global execute gate.", required: false }
@@ -158,7 +158,7 @@ Module("SignControlService") {
       }
 
       Function("render_bundle") {
-        description: "Compile a text, image, or animation request into a FrameBundle at panel geometry, applying merged orientation defaults and quantizing to the palette derived from the profile color_mode (DeviceProfileLedger.derive_display_palette). An image request with temporal >= 2 compiles instead to a temporal-colour (FRC) subframe loop timed above the panel's fusion ceiling (PixelFramePipeline.compile_temporal_still); levels (black/white point) apply to both image paths. Delegates all compilation to PixelFramePipeline; performs no encoding and no delivery."
+        description: "Compile a text, image, or animation request into a FrameBundle at panel geometry, applying merged orientation defaults and quantizing to the palette derived from the profile color_mode (DeviceProfileLedger.derive_display_palette). An image request with temporal >= 2 compiles instead to a temporal-colour (FRC) subframe loop timed above the panel's fusion ceiling where it can be (PixelFramePipeline.compile_temporal_still); levels (black/white point) apply to both image paths. Delegates all compilation to PixelFramePipeline; performs no encoding and no delivery."
         metaphor: "Building the gobo before the cue, mixing only inks the fixture can throw -- or fanning one into a flicker for in-between shades."
         input_parameters: {
           state: { type: "PanelState", description: "Target panel.", required: true },
@@ -373,7 +373,7 @@ Module("SignControlService") {
           "A bundle must match the panel geometry before any encoding or delivery.",
           "This is the sole cross-module orchestrator: PixelFramePipeline only compiles bundles; encoding and delivery are delegated to CoolLEDXProtocol + GuardedTransport.",
           "Animated input is bounded (max_frames, max_bytes) before any decode.",
-          "Temporal-colour is an image rendering option compiled by PixelFramePipeline (still -> FRC subframe loop): its subframes / loop_hz / levels are surfaced in diagnostics, and it must beat the profile's fusion ceiling.",
+          "Temporal-colour is an image rendering option compiled by PixelFramePipeline (still -> FRC subframe loop): its subframes / loop_hz / fusion_hz / levels are surfaced in diagnostics, and a loop that cannot beat the fusion ceiling is played anyway -- deliberate overdrive -- with the reason returned in the response's warnings, never refused and never silent.",
           "The three truths -- host write success, ack telemetry, and observed display confirmation -- are assembled and recorded here, never conflated.",
           "Every request is traced with a correlation id, and artifacts are persisted when an artifact_dir is set."
         ]
@@ -390,7 +390,7 @@ Module("SignControlService") {
       - Being the sole cross-module orchestrator: compile (PixelFramePipeline) -> encode (CoolLEDXProtocol) -> deliver (GuardedTransport).
       - Bounded media ingest for animated sources (max_frames / max_bytes) before decode.
       - Assembling the three truths: host write success, ack telemetry, and observed display confirmation.
-      - Temporal-colour (FRC) as an image-playback option (subframes + black/white levels), with its subframes/loop_hz surfaced in diagnostics.
+      - Temporal-colour (FRC) as an image-playback option (subframes + black/white levels), with its subframes/loop_hz surfaced in diagnostics and a fusion warning returned when the loop is too slow to blend.
       - Request tracing, artifact persistence, scheduler and integrations surface.
       - The HTTP endpoints: /status, /text, /image (static or temporal), /animation, /bundle, /brightness, /power.
     delegates: |

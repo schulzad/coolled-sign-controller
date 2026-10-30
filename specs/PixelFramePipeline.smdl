@@ -48,7 +48,7 @@ Module("PixelFramePipeline") {
       }
 
       Directive("/compile_temporal_still") {
-        description: "Compile a STILL image into a fast N-subframe loop that fakes intermediate colours by temporal dithering (frame-rate control): fit/orient, tone-remap with levels, expand into N>=2 binarized subframes, and time the loop above the panel's flicker-fusion ceiling so each pixel's duty cycle reads as a colour the 1-bit panel cannot show in a single frame. Produces an ordinary multi-frame FrameBundle that rides the verified 0x04 animation path -- no protocol change. For stills only: the loop IS the picture and must carry no motion."
+        description: "Compile a STILL image into a fast N-subframe loop that fakes intermediate colours by temporal dithering (frame-rate control): fit/orient, tone-remap with levels, expand into N>=2 binarized subframes, and time the loop above the panel's flicker-fusion ceiling so each pixel's duty cycle reads as a colour the 1-bit panel cannot show in a single frame. Past floor(1000 / fusion_hz) subframes (16 at 62 Hz) the 1 ms hold floor cannot keep the loop that fast; such a request still compiles, so the panel can be overdriven on purpose, and its diagnostics carry a fusion warning. Produces an ordinary multi-frame FrameBundle that rides the verified 0x04 animation path -- no protocol change. For stills only: the loop IS the picture and must carry no motion."
         metaphor: "Fanning one plate into a rapid flicker-book so the eye blends the ink into shades that no single plate holds."
         parameters: {
           image: { type: "Image|path", description: "Single still to expand.", required: true },
@@ -57,7 +57,7 @@ Module("PixelFramePipeline") {
           subframes: { type: "int", description: "Number of temporal subframes (N >= 2); yields N+1 duty levels per channel.", required: true },
           black_point: { type: "int", description: "Levels: crush channel values <= black_point to off before dithering (0-254).", required: false, default: 0 },
           white_point: { type: "int", description: "Levels: lift channel values >= white_point to full on (1-255).", required: false, default: 255 },
-          fusion_hz: { type: "float", description: "Flicker-fusion ceiling the loop must beat; default is the device fact (~62 Hz).", required: false, default: 62.0 },
+          fusion_hz: { type: "float", description: "Flicker-fusion ceiling the loop is timed to beat; default is the device fact (~62 Hz).", required: false, default: 62.0 },
           fit_mode: { type: "string", description: "contain | cover | stretch.", required: false, default: "contain" },
           orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
         }
@@ -175,7 +175,7 @@ Module("PixelFramePipeline") {
       }
 
       Function("build_frame_bundle") {
-        description: "Package quantized frames into a transport-neutral FrameBundle with durations, loop mode, per-frame SHA-256 hashes, and a bundle_hash covering geometry, frame bytes, timing, loop policy, palette, and compiler version (for integrity and cache detection). Previews are rendered from the quantized frames so a preview matches what the panel will actually show."
+        description: "Package quantized frames into a transport-neutral FrameBundle with durations, loop mode, per-frame SHA-256 hashes, and a bundle_hash covering geometry, frame bytes, timing, loop policy, palette, and compiler version (for integrity and cache detection). Previews are rendered from the quantized frames, each channel cut at the codec's 127 threshold, so a preview matches what the panel will actually show -- including a dither 'none' frame, which keeps its midtones until the codec packs it (before 2026-10-30 its preview showed them, so a purple source previewed purple while the panel lit it blue). The one exception is a temporal still's .png preview: its subframes exist only to blend, so it shows their hold-weighted average, the tone the eye should see, while its .gif shows the raw subframes (no GIF viewer plays 1 ms subframes fast enough to blend them)."
         metaphor: "Proofing, numbering, and stamping the plates so the proof equals the print."
         input_parameters: {
           frames: { type: "array[Image]", description: "Quantized frames.", required: true },
@@ -196,7 +196,7 @@ Module("PixelFramePipeline") {
       }
 
       Function("compile_diagnostics") {
-        description: "Assemble an honest report of everything the (necessarily lossy) compile did, so a caller is never surprised by silent adaptation: source duration, chosen tick, output frame count, timing error, dropped/duplicated frames, estimated encoded payload bytes and whether it fits the codec budget, palette, dither mode, and loop adaptation."
+        description: "Assemble an honest report of everything the (necessarily lossy) compile did, so a caller is never surprised by silent adaptation: source duration, chosen tick, output frame count, timing error, dropped/duplicated frames, estimated encoded payload bytes and whether it fits the codec budget, palette, dither mode, and loop adaptation. A temporal still reports its subframes, loop_hz and fusion_hz instead, plus a warning whenever loop_hz falls below fusion_hz (studio.temporal_fusion_warning, which the CLI prints and the API returns as warnings)."
         metaphor: "The proof slip that lists every liberty the composing room took."
         input_parameters: {
           bundle: { type: "FrameBundle", description: "Compiled bundle.", required: true },
@@ -262,7 +262,7 @@ Module("PixelFramePipeline") {
       }
 
       Function("choose_fused_speed") {
-        description: "Pick the per-frame hold time so the whole N-frame loop repeats above the panel's MEASURED flicker-fusion ceiling (a device fact ~62 Hz on this hardware): speed_ms = floor(1000 / (fusion_hz * N)), clamped to >= 1, so even the slowest-pulsing (1-of-N) pixel beats fusion -- loop_period = N * speed_ms <= 1000 / fusion_hz. Overridable. Below the ceiling the dither stops fusing and reads as visible flicker rather than a steady tone; this speed becomes the bundle's single global animation speed."
+        description: "Pick the per-frame hold time so the whole N-frame loop repeats above the panel's MEASURED flicker-fusion ceiling (a device fact ~62 Hz on this hardware): speed_ms = floor(1000 / (fusion_hz * N)), clamped to >= 1, so even the slowest-pulsing (1-of-N) pixel beats fusion -- loop_period = N * speed_ms <= 1000 / fusion_hz. Overridable. Below the ceiling the dither stops fusing and reads as visible flicker rather than a steady tone; this speed becomes the bundle's single global animation speed. Past floor(1000 / fusion_hz) subframes (16 at 62 Hz) the clamp wins and the loop runs slower than the ceiling (79 subframes repeat at 12.7 Hz); the speed is still returned, and compile_diagnostics warns."
         metaphor: "Cranking the flip-book just fast enough that the eye stops seeing pages and starts seeing a shade."
         input_parameters: {
           subframes: { type: "int", description: "N subframes in the loop.", required: true },
@@ -317,7 +317,7 @@ Module("PixelFramePipeline") {
           { source: "apply_levels", target: "temporal_dither_still", description: "Expand into N binarized subframes." },
           { source: "temporal_dither_still", target: "choose_fused_speed", description: "Time the loop above the fusion ceiling." },
           { source: "choose_fused_speed", target: "build_frame_bundle", description: "Bundle the subframes at one global speed." },
-          { source: "build_frame_bundle", target: "compile_diagnostics", description: "Report subframes, loop_hz, levels, fused speed." }
+          { source: "build_frame_bundle", target: "compile_diagnostics", description: "Report subframes, loop_hz, levels, fused speed; warn when the loop is slower than fusion." }
         ]
         tags: ["pipe", "transport-neutral", "temporal", "frame-rate-control"]
       }
@@ -337,10 +337,10 @@ Module("PixelFramePipeline") {
           "The resample filter follows colour-reduction intent: dither_mode 'none' fits with NEAREST (a smoothing filter manufactures grey edges the codec's hard >127 threshold scatters), while dithered modes use size-aware smoothing.",
           "Variable source timing is resampled onto the device single global speed or rejected in strict mode -- never silently dropped.",
           "Temporal (FRC) compilation expands a STILL into N>=2 binarized subframes: each subframe is palette-exact, but the PERCEIVED colour is inter-palette via duty-cycle time-averaging -- it is not a new single-frame colour.",
-          "A temporal loop is timed above the panel's measured flicker-fusion ceiling (device fact, ~62 Hz): loop_period = N * speed_ms <= 1000 / fusion_hz, or the dither reads as visible flicker instead of a fused tone.",
+          "A temporal loop is timed above the panel's measured flicker-fusion ceiling (device fact, ~62 Hz) whenever it can be: loop_period = N * speed_ms <= 1000 / fusion_hz, or the dither reads as visible flicker instead of a fused tone. A loop that cannot be (more than floor(1000 / fusion_hz) subframes at the 1 ms hold floor) is warned about, never refused, so the panel can be overdriven on purpose -- and never flickers silently.",
           "Temporal expansion is for stills only; it must carry no motion, and its subframe count still fits the codec's 30 KiB payload limit (79 frames at 64x16).",
           "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec's 30 KiB payload limit (79 at 64x16) before hand-off.",
-          "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames.",
+          "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames with each channel cut at the codec's 127 threshold, so even a dither 'none' preview shows only panel colours, and a temporal still's .png preview is their blend -- the ideal the panel approximates, not proof of what it shows.",
           "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService."
         ]
         tags: ["compile", "transport-neutral", "verified-hardware"]
@@ -355,7 +355,7 @@ Module("PixelFramePipeline") {
       - Fit/orient to panel geometry.
       - Levels (black/white point) tone remapping before quantization, manual or auto (compute_auto_levels: a value-histogram contrast stretch, read from the source so letterbox bars do not skew it, that rescues low-contrast art); reports which channels can actually cross the panel's 1-bit threshold.
       - Palette-aware quantization + dithering (ordered default for animation; error diffusion opt-in for static).
-      - Temporal-colour (frame-rate-control) expansion of a still into N binarized subframes timed above the fusion ceiling.
+      - Temporal-colour (frame-rate-control) expansion of a still into N binarized subframes timed above the fusion ceiling where it can be (warned, not refused, where it cannot).
       - Timeline resampling onto the device single-speed model, with honest diagnostics.
       - Transport-neutral FrameBundle assembly with per-frame hashes, a bundle_hash, and quantized previews.
     delegates: |
@@ -375,7 +375,9 @@ Module("PixelFramePipeline") {
     open_work: |
       - GIF decode with disposal + alpha compositing is shipped as PixelAnimationStudio.create_gif_bundle (Pillow ImageSequence.Iterator + composite_frame, evenly subsampled to the device frame-buffer budget) and driven by both coolled gif and the API /animation route; remaining is unifying it under the design-level create_animation_bundle name and confirming APNG coverage/tests.
       - The scrambled 'Running' turned out to be the IMAGE path on a low-contrast AA badge (not text rendering): red/blue never cross the 1-bit threshold and green straddles it. Addressed 2026-07-14 by --auto-levels (value-histogram stretch) plus a dark-channel warning; the cleaner long-term answer for actual text is the native text path (crisp 1-bit glyphs, no downscale).
-      - Temporal colour is implemented (create_temporal_image_bundle) and surfaced in metadata (subframes/loop_hz/levels); remaining: per-channel perceptual matching and a proper perceived-gamut map so a target RGB picks subframe duty per channel.
+      - Temporal colour is implemented (create_temporal_image_bundle) and surfaced in metadata (subframes/loop_hz/fusion_hz/levels); remaining: per-channel perceptual matching and a proper perceived-gamut map so a target RGB picks subframe duty per channel.
+      - A line that crawls down the panel from top to bottom at high subframe counts (reported when maxing out at 79 subframes, 2026-10-29; it moves, it is not a stationary stripe) is explained so far only by a model. Nothing in the subframes moves, so the motion comes from how the panel draws them: it redraws its rows on its own timer while the animation swaps subframes on another, and when the two drift slightly against each other, the rows that catch the wrong mix of subframes shift a little with every swap, so the seam rolls through the picture at the beat frequency, like the rolling bar on a filmed TV. The bit-reversal order makes that wrong mix as unequal as possible (for a power-of-two N the even subframes hold exactly the lowest thresholds). In a 1/16 row-scan simulation of a flat 50% grey, a 2 ms scan turns N=16 at 1 ms into fully lit rows beside fully dark ones and N=79 into crawling bands. The crawl is itself a measurement: a single slow line crosses the panel as many times per second as the panel's refresh rate is away, in Hz, from the nearest whole multiple of the subframe rate (1000 Hz at 1 ms holds); two evenly spaced lines would mean a half multiple. Unmeasured: the panel's refresh rate (it bounds useful N at roughly refresh_hz / fusion_hz), whether it scans rows or columns, and whether a 79-frame loop's per-frame fetch from storage disturbs the redraw on its own (79 identical frames at 1 ms would tell). Until then the dependable fix is fewer subframes.
+      - Rejected on hardware 2026-10-29: staggering pixels through the subframe order with a linear phase ramp (pixel (x, y) playing order_seq[(t + x + y) % N]). The row-scan simulation, which measured only row averages and whole-panel brightness, showed it clearing the stripes; on the panel it drew angled lines that streak across. Pixels on one diagonal play the same subframe together, so a dark tone at N=79 becomes diagonal lines about 20 px apart that shift one pixel every 1 ms subframe. A 79 ms loop carries energy below fusion that no reordering removes, and a coherent spatial offset turns it into visible motion. Any later phase scheme must avoid coherent spatial structure, and can only help once the loop itself is above fusion.
       - bundle_hash cache to skip re-transfer when the panel already holds an asset.
   }
 }
