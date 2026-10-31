@@ -76,6 +76,7 @@ An AI agent drew these through the [MCP server](#mcp-server). Each is a scene: s
 | :---: | :---: |
 | **Night skyline**<br><sub>`night-skyline.json`<br>4 frames · 300 ms</sub> | <img src="examples/generated/scenes/night-skyline.gif" width="512" alt="A night skyline of blue and magenta buildings with yellow windows under a crescent moon, stars twinkling and a shooting star crossing"> |
 | **Pac-Man chomp**<br><sub>`pacman-chomp.json`<br>4 frames · 150 ms</sub> | <img src="examples/generated/scenes/pacman-chomp.gif" width="512" alt="Cyan, magenta and red ghosts behind a chomping yellow Pac-Man and a row of dots"> |
+| **Aquarium**<br><sub>`aquarium.json`<br>4 frames · 250 ms</sub> | <img src="examples/generated/scenes/aquarium.gif" width="512" alt="A yellow fish and a red fish facing each other among swaying green seaweed, under a rippled blue surface and over yellow sand, with cyan bubbles rising"> |
 
 `uv run python scripts/render_scenes.py` rebuilds these renders and a frame bundle for each scene, and `coolled send examples/generated/scenes/night-skyline.bundle.json` plays one on the panel. To look at a drawing before sending it without the MCP server, `uv run python scripts/picture.py SOURCE OUT.png` renders a scene file or a text drawing to the same picture `render` returns. [`pacman-chomp.txt`](examples/scenes/pacman-chomp.txt) is the chomp as it was first drawn, by hand in `draw`'s format: 2,560 characters that compile to the same frames as its scene.
 

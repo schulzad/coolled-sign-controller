@@ -1,0 +1,145 @@
+{
+  "frame_ms": 250,
+  "notes": {
+    "fronds": "Each sway state holds two frames and the three fronds are a frame apart, so the weed sways slowly and out of step.",
+    "eyes": "K is black: the fish's eyes stay dark whatever passes behind them.",
+    "layers": "The surface and floor are items, so everything animated draws over them; the fronds' roots on the sand are deliberate.",
+    "red fish": "Half behind the middle frond on purpose; the frond crossing its tail is the depth."
+  },
+  "sprites": {
+    "surf": [
+      "..BBB...",
+      "BB...BBB"
+    ],
+    "floor": ["YYYYYYYY"],
+    "bump1": ["Y"],
+    "bump2": ["YY"],
+    "bump3": ["YYY"],
+    "frond_a": [
+      ".G.",
+      "G..",
+      ".G.",
+      "..G",
+      ".G.",
+      "G..",
+      ".G.",
+      "..G",
+      ".G.",
+      "G..",
+      ".G.",
+      "..G"
+    ],
+    "frond_b": [
+      ".G.",
+      "..G",
+      ".G.",
+      "G..",
+      ".G.",
+      "..G",
+      ".G.",
+      "G..",
+      ".G.",
+      "..G",
+      ".G.",
+      "G.."
+    ],
+    "fish_a": [
+      "....YYYY..",
+      "Y..YYYYKY.",
+      "YYYYYYYYYY",
+      "Y..YYYYYY.",
+      "....YYYY.."
+    ],
+    "fish_b": [
+      "Y...YYYY..",
+      ".Y.YYYYKY.",
+      "..YYYYYYYY",
+      ".Y.YYYYYY.",
+      "Y...YYYY.."
+    ],
+    "red_a": [
+      "..RRR...",
+      ".RKRRR.R",
+      "RRRRRRRR",
+      ".RRRRR.R",
+      "..RRR..."
+    ],
+    "red_b": [
+      "..RRR..R",
+      ".RKRRRR.",
+      "RRRRRR..",
+      ".RRRRRR.",
+      "..RRR..R"
+    ],
+    "bubble": ["C"]
+  },
+  "items": [
+    {"sprite": "surf", "at": [0, 0]},
+    {"sprite": "surf", "at": [8, 0]},
+    {"sprite": "surf", "at": [16, 0]},
+    {"sprite": "surf", "at": [24, 0]},
+    {"sprite": "surf", "at": [32, 0]},
+    {"sprite": "surf", "at": [40, 0]},
+    {"sprite": "surf", "at": [48, 0]},
+    {"sprite": "surf", "at": [56, 0]},
+    {"sprite": "floor", "at": [0, 15]},
+    {"sprite": "floor", "at": [8, 15]},
+    {"sprite": "floor", "at": [16, 15]},
+    {"sprite": "floor", "at": [24, 15]},
+    {"sprite": "floor", "at": [32, 15]},
+    {"sprite": "floor", "at": [40, 15]},
+    {"sprite": "floor", "at": [48, 15]},
+    {"sprite": "floor", "at": [56, 15]},
+    {"sprite": "bump2", "at": [2, 14]},
+    {"sprite": "bump1", "at": [10, 14]},
+    {"sprite": "bump3", "at": [17, 14]},
+    {"sprite": "bump1", "at": [26, 14]},
+    {"sprite": "bump2", "at": [31, 14]},
+    {"sprite": "bump2", "at": [40, 14]},
+    {"sprite": "bump1", "at": [49, 14]},
+    {"sprite": "bump3", "at": [56, 14]},
+    {"sprite": "bump1", "at": [62, 14]}
+  ],
+  "frames": [
+    [
+      {"sprite": "frond_a", "at": [4, 5]},
+      {"sprite": "red_b", "at": [38, 5], "colors": {"K": "black"}},
+      {"sprite": "frond_b", "at": [43, 3]},
+      {"sprite": "frond_b", "at": [55, 7]},
+      {"sprite": "fish_a", "at": [12, 6], "colors": {"K": "black"}},
+      {"sprite": "bubble", "at": [23, 7]},
+      {"sprite": "bubble", "at": [24, 1]},
+      {"sprite": "bubble", "at": [50, 13]}
+    ],
+    [
+      {"sprite": "frond_a", "at": [4, 5]},
+      {"sprite": "red_a", "at": [38, 5], "colors": {"K": "black"}},
+      {"sprite": "frond_a", "at": [43, 3]},
+      {"sprite": "frond_b", "at": [55, 7]},
+      {"sprite": "fish_b", "at": [12, 6], "colors": {"K": "black"}},
+      {"sprite": "bubble", "at": [23, 5]},
+      {"sprite": "bubble", "at": [23, 7]},
+      {"sprite": "bubble", "at": [50, 11]}
+    ],
+    [
+      {"sprite": "frond_b", "at": [4, 5]},
+      {"sprite": "red_b", "at": [38, 5], "colors": {"K": "black"}},
+      {"sprite": "frond_a", "at": [43, 3]},
+      {"sprite": "frond_a", "at": [55, 7]},
+      {"sprite": "fish_a", "at": [12, 7], "colors": {"K": "black"}},
+      {"sprite": "bubble", "at": [24, 3]},
+      {"sprite": "bubble", "at": [23, 5]},
+      {"sprite": "bubble", "at": [51, 9]}
+    ],
+    [
+      {"sprite": "frond_b", "at": [4, 5]},
+      {"sprite": "red_a", "at": [38, 5], "colors": {"K": "black"}},
+      {"sprite": "frond_b", "at": [43, 3]},
+      {"sprite": "frond_a", "at": [55, 7]},
+      {"sprite": "fish_b", "at": [12, 7], "colors": {"K": "black"}},
+      {"sprite": "bubble", "at": [24, 1]},
+      {"sprite": "bubble", "at": [24, 3]},
+      {"sprite": "bubble", "at": [51, 7]}
+    ]
+  ]
+}
