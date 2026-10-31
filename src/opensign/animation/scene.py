@@ -1,9 +1,10 @@
-"""Scenes: small sprites written as text, placed on the panel by coordinate.
+"""Frames written as text: whole drawings, and scenes of small sprites placed by coordinate.
 
-A scene is ``{"sprites": {name: rows}, "items": [placement, ...], "frames":
-[[placement, ...], ...]}``. A sprite is a small drawing in the legend ``text_preview``
-writes, except that ``.`` is transparent and any letter outside the legend takes the
-colour each placement gives it. A placement is ``{"sprite": name, "at": [x, y],
+A drawing is frames written one character per pixel in the legend ``text_preview``
+writes, a blank line between frames. A scene is ``{"sprites": {name: rows}, "items":
+[placement, ...], "frames": [[placement, ...], ...]}``. A sprite is a small drawing in
+that legend, except that ``.`` is transparent and any letter outside the legend takes
+the colour each placement gives it. A placement is ``{"sprite": name, "at": [x, y],
 "colors": {letter: colour}}``, ``at`` being the sprite's top-left corner; it may hang
 off the panel, and later placements draw on top. ``items`` appear in every frame, and
 each entry of ``frames`` adds its own placements on top of them.
@@ -11,6 +12,7 @@ each entry of ``frames`` adds its own placements on top of them.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -25,6 +27,47 @@ from .studio import PixelAnimationStudio
 _LETTER_RGB = {
     char: tuple(255 if on else 0 for on in key) for key, char in TEXT_LEGEND.items() if char != "."
 }
+
+
+def compile_drawing(
+    text: str,
+    width: int,
+    height: int,
+    *,
+    foreground: str = "white",
+    frame_ms: int = 200,
+    max_frames: int | None = None,
+) -> FrameBundle:
+    """A drawing's frames, each centred on the panel; ``#`` lights ``foreground``.
+
+    Raises ValueError naming what is wrong and where, as in ``frame 1: row 2 is 63
+    wide but row 1 is 64; every row must be the same width``.
+    """
+    if frame_ms <= 0:
+        raise ValueError("frame_ms must be positive")
+    drawings = re.split(r"\n\s*\n", text.replace("\r\n", "\n").strip())
+    if max_frames is not None and len(drawings) > max_frames:
+        raise ValueError(f"{len(drawings)} frames is more than the {max_frames} one upload holds")
+    color = parse_color(foreground)
+    frames = []
+    for index, drawing in enumerate(drawings):
+        where = f"frame {index}: " if len(drawings) > 1 else ""
+        try:
+            image = image_from_text(drawing, foreground=color)
+        except ValueError as exc:
+            raise ValueError(f"{where}{exc}") from exc
+        if image.width > width or image.height > height:
+            raise ValueError(f"{where}the drawing is {image.width}x{image.height}, "
+                             f"larger than the {width}x{height} panel")
+        frame = Image.new("RGB", (width, height))
+        frame.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
+        frames.append(frame)
+    return PixelAnimationStudio(width, height).compile_images(
+        frames,
+        frame_durations_ms=[frame_ms] * len(frames),
+        frames_per_second=1000 / frame_ms,
+        metadata={"pattern": "draw"},
+    )
 
 
 def _color(value: Any, where: str) -> tuple[int, int, int]:

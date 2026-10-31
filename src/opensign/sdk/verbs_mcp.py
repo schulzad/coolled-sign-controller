@@ -23,7 +23,6 @@ import hashlib
 import io
 import json
 import logging
-import re
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
@@ -37,20 +36,9 @@ from PIL import Image, ImageChops
 from pydantic import Field
 
 from opensign.animation.cache import default_render_cache_dir
-from opensign.animation.preview import (
-    TEXT_LEGEND,
-    TEXT_STYLES,
-    image_from_text,
-    scale_frame,
-    text_preview,
-)
-from opensign.animation.render import (
-    parse_color,
-    render_static_text,
-    render_wide_text,
-    threshold_to_panel,
-)
-from opensign.animation.scene import compile_scene
+from opensign.animation.preview import TEXT_LEGEND, TEXT_STYLES, contact_sheet, text_preview
+from opensign.animation.render import parse_color, render_static_text, render_wide_text
+from opensign.animation.scene import compile_drawing, compile_scene
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile, FrameBundle
 from opensign.protocol.codec import CodecError
@@ -281,13 +269,8 @@ def _frames(bundle: FrameBundle, frame: str) -> tuple[list[int], str | None]:
 
 def _picture(images: list[Image.Image]) -> ImageContent:
     """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom."""
-    frames = [scale_frame(threshold_to_panel(image), scale=PICTURE_SCALE, grid=True) for image in images]
-    width, height = frames[0].size
-    sheet = Image.new("RGB", (width, len(frames) * (height + PICTURE_GAP) - PICTURE_GAP), (64, 64, 64))
-    for index, frame in enumerate(frames):
-        sheet.paste(frame, (0, index * (height + PICTURE_GAP)))
     png = io.BytesIO()
-    sheet.save(png, format="PNG")
+    contact_sheet(images, scale=PICTURE_SCALE, gap=PICTURE_GAP).save(png, format="PNG")
     return ImageContent(type="image", data=base64.b64encode(png.getvalue()).decode("ascii"),
                         mimeType="image/png")
 
@@ -331,35 +314,6 @@ def _rendered(
     return _shown(payload, [images[i] for i in indexes] if picture else [])
 
 
-def _drawn_bundle(value: str, profile: DeviceProfile, *, foreground: str, frame_ms: int) -> FrameBundle:
-    """Frames drawn as text, each centred on the panel; a blank line separates frames."""
-    width, height = profile.width, profile.height
-    drawings = re.split(r"\n\s*\n", value.replace("\r\n", "\n").strip())
-    budget = _frame_budget(profile)
-    if len(drawings) > budget:
-        raise ValueError(f"{len(drawings)} frames is more than the {budget} one upload holds")
-    color = parse_color(foreground)
-    frames = []
-    for index, drawing in enumerate(drawings):
-        where = f"frame {index}: " if len(drawings) > 1 else ""
-        try:
-            image = image_from_text(drawing, foreground=color)
-        except ValueError as exc:
-            raise ValueError(f"{where}{exc}") from exc
-        if image.width > width or image.height > height:
-            raise ValueError(f"{where}the drawing is {image.width}x{image.height}, "
-                             f"larger than the {width}x{height} panel")
-        frame = Image.new("RGB", (width, height))
-        frame.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
-        frames.append(frame)
-    return PixelAnimationStudio(width, height).compile_images(
-        frames,
-        frame_durations_ms=[frame_ms] * len(frames),
-        frames_per_second=1000 / frame_ms,
-        metadata={"pattern": "draw"},
-    )
-
-
 def _compile(
     verb: str,
     noun: str,
@@ -396,7 +350,8 @@ def _compile(
                 return _usage(verb, noun, "needs value, the frames drawn as text")
             if frame_ms <= 0:
                 return _usage(verb, noun, "frame_ms must be positive")
-            return _drawn_bundle(value, profile, foreground=foreground, frame_ms=frame_ms)
+            return compile_drawing(value, profile.width, profile.height, foreground=foreground,
+                                   frame_ms=frame_ms, max_frames=_frame_budget(profile))
         if noun == "scene":
             if not isinstance(scene, Mapping) or not scene:
                 return _usage(verb, noun, "needs scene: its sprites and where to place them")

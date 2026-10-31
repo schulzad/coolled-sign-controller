@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -28,6 +28,20 @@ def scale_frame(image: Image.Image, *, scale: int = 16, grid: bool = False) -> I
         for y in range(0, enlarged.height + 1, scale):
             draw.line((0, y, enlarged.width - 1, y), fill=(48, 48, 48))
     return enlarged
+
+
+def contact_sheet(images: Sequence[Image.Image], *, scale: int = 8, gap: int = 6) -> Image.Image:
+    """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom."""
+    if not images:
+        raise ValueError("a contact sheet needs at least one frame")
+    frames = [scale_frame(threshold_to_panel(image), scale=scale, grid=True) for image in images]
+    height = sum(frame.height for frame in frames) + gap * (len(frames) - 1)
+    sheet = Image.new("RGB", (max(frame.width for frame in frames), height), (64, 64, 64))
+    top = 0
+    for frame in frames:
+        sheet.paste(frame, (0, top))
+        top += frame.height + gap
+    return sheet
 
 
 def _expanded_loop(bundle: FrameBundle, images: list[Image.Image]) -> tuple[list[Image.Image], list[int]]:

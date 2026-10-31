@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from opensign.animation.scene import compile_scene
+from opensign.animation.preview import contact_sheet
+from opensign.animation.scene import compile_drawing, compile_scene
 from opensign.contracts import FrameBundle
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -20,6 +22,23 @@ def test_saved_scenes_still_compile_to_their_bundles(path: Path) -> None:
     assert (bundle.frame_hashes, bundle.frame_durations_ms) == (
         saved.frame_hashes, saved.frame_durations_ms
     )
+
+
+def test_the_hand_drawn_chomp_matches_its_scene() -> None:
+    scene = json.loads((EXAMPLES / "scenes" / "pacman-chomp.json").read_text(encoding="utf-8"))
+    drawing = (EXAMPLES / "scenes" / "pacman-chomp.txt").read_text(encoding="utf-8")
+    by_hand = compile_drawing(drawing, 64, 16, frame_ms=scene["frame_ms"])
+    from_sprites = compile_scene(scene, 64, 16, frame_ms=scene["frame_ms"])
+    assert by_hand.frame_hashes == from_sprites.frame_hashes
+
+
+def test_contact_sheet_stacks_frames_of_any_width() -> None:
+    wide, narrow = Image.new("RGB", (8, 2), "red"), Image.new("RGB", (4, 2), "blue")
+    sheet = contact_sheet([wide, narrow], scale=2, gap=1)
+    assert sheet.size == (16, 9)
+    assert [sheet.getpixel(xy) for xy in [(1, 1), (1, 6), (12, 6)]] == [
+        (255, 0, 0), (0, 0, 255), (64, 64, 64)
+    ]
 
 
 def test_compile_scene_refuses_more_frames_than_one_upload_holds() -> None:
