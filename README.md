@@ -68,6 +68,17 @@ done
 `--preview` renders locally and **skips BLE**; drop it (and add `--profile device_profile.local.json`) to play on hardware. Panel captures live in `examples/recordings/`.
 </details>
 
+### Drawn by an agent
+
+An AI agent drew these through the [MCP server](#mcp-server). Each is a scene: small sprites written as text, placed by coordinate, checked by eye in `render`'s picture, then sent with `plan` and `accept`. The files in [`examples/scenes/`](examples/scenes) are the whole of each drawing.
+
+| Scene | Render |
+| :---: | :---: |
+| **Night skyline**<br><sub>`night-skyline.json`<br>4 frames · 300 ms</sub> | <img src="examples/generated/scenes/night-skyline.gif" width="512" alt="A night skyline of blue and magenta buildings with yellow windows under a crescent moon, stars twinkling and a shooting star crossing"> |
+| **Pac-Man chomp**<br><sub>`pacman-chomp.json`<br>4 frames · 150 ms</sub> | <img src="examples/generated/scenes/pacman-chomp.gif" width="512" alt="Cyan, magenta and red ghosts behind a chomping yellow Pac-Man and a row of dots"> |
+
+`uv run python scripts/render_scenes.py` rebuilds these renders and a frame bundle for each scene, and `coolled send examples/generated/scenes/night-skyline.bundle.json` plays one on the panel.
+
 ### Dithering: faking colours the panel doesn't have
 
 The panel is 1 bit per channel — 8 states total (black, red, green, blue, cyan, magenta, yellow, white). A full-spectrum bar has far more colours than that, so the codec either snaps each pixel to the nearest of the 8 (`--dither none`) or trades spatial detail for apparent colour with ordered or Floyd–Steinberg dithering:
@@ -92,13 +103,13 @@ More subframes blend closer on paper, but the eye only blends a loop that repeat
 
 ## Architecture
 
-Frames flow one way: rendering never touches Bluetooth, only the codec knows the wire format, and only the transport touches the radio, where the sign's per-chunk acks come back to pace each chunk. The `coolled` CLI and the localhost API drive the same pipeline through `ProtocolRuntime`, which encodes and delivers on one BLE session (adding follow-ups such as the still's static mode); the MCP server stops at rendering.
+Frames flow one way: rendering never touches Bluetooth, only the codec knows the wire format, and only the transport touches the radio, where the sign's per-chunk acks come back to pace each chunk. The `coolled` CLI, the localhost API, and the MCP server drive the same pipeline through `ProtocolRuntime`, which encodes and delivers on one BLE session (adding follow-ups such as the still's static mode); the MCP server only dry-runs that delivery until it is started with `--execute`.
 
 ```mermaid
 flowchart LR
   CLI["coolled CLI"]
   SDK["Localhost API<br/>sdk"]
-  MCP["Render-only MCP<br/>opensign-verbs"]
+  MCP["MCP server<br/>opensign-verbs"]
   HP["Discover<br/>hardware_probe"]
   LG["Profile + evidence<br/>contracts"]
   AN["Compile frames<br/>animation"]
@@ -120,6 +131,7 @@ flowchart LR
   SDK -.-> AN
   SDK -.-> PR
   MCP -.-> AN
+  MCP -.-> PR
 ```
 
 ## Install
@@ -204,27 +216,18 @@ Flags worth knowing (run `coolled <command> --help` for the full list):
 
 `/animation` and `/image` (`temporal`) compile server-side. The API's `/text` now uses the device-native firmware scroll by default (matching `coolled text`); pass `native=false` for the host-side flipbook or `scroll=false` for a single static frame.
 
-### MCP render surface
+### MCP server
 
-`opensign-verbs` is a read-only [MCP](https://modelcontextprotocol.io) server, `coolled-verbs`, that lets an agent see what the panel would show. It follows the verbs-and-nouns shape of smdl-factory's `smdl-verbs`: call a verb with no noun to list its nouns.
+`opensign-verbs` is an [MCP](https://modelcontextprotocol.io) server, `coolled-verbs`, that lets an agent see what the panel would show, draw on it, and send to it once you allow that. It follows the verbs-and-nouns shape of smdl-factory's `smdl-verbs`: call a verb with no noun to list its nouns.
 
 | Verb | Nouns | Returns |
 | --- | --- | --- |
-| `describe` | `panel`, `legend` | Geometry, colours and capability statuses; the character each colour renders as |
-| `render` | `text`, `pattern`, `image`, `animation`, `bundle` | Each frame as text, one character per pixel (`.` off, `#` lit, or a colour letter) |
+| `describe` | `panel`, `legend`, `upload` | Geometry, colours, capability statuses, and whether `accept` sends; the character each colour renders as; the last upload's progress or result |
+| `render` | `text`, `draw`, `scene`, `pattern`, `image`, `animation`, `bundle` | Each frame as a picture and as text, one character per pixel (`.` off, `#` lit, or a colour letter) |
+| `plan` | the same as `render` | What the panel will show, the packets a send writes, blockers, warnings, and a `plan_id`; never sends |
+| `accept` | none; takes a plan's `plan_id` | Sends the plan, but only on a server started with `--execute` |
 
-`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`: scrolling text and animations (in place or with `scroll`) are trimmed to the same frame budget the CLI sends (79 at 64×16), and `fit` takes the CLI's `contain`, `cover`, and `fill`. It never encodes or sends. Install with `pip install -e '.[mcp]'` and register it with your client:
-
-```json
-{
-  "mcpServers": {
-    "coolled-verbs": {
-      "command": "opensign-verbs",
-      "args": ["--profile", "/path/to/device_profile.local.json"]
-    }
-  }
-}
-```
+`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`: scrolling text and animations (in place or with `scroll`) are trimmed to the same frame budget the CLI sends (79 at 64×16), and `fit` takes the CLI's `contain`, `cover`, and `fill`. `render` and `plan` also return the frames as one picture, each LED drawn 8 pixels wide on a grid and the frames stacked top to bottom, so an agent that can see images can judge the result at a glance; `picture=false` leaves it out.
 
 ```
 render text value=HELLO   (rows 4-11 of 16)
@@ -236,6 +239,50 @@ render text value=HELLO   (rows 4-11 of 16)
 ................#....#..#.....#.....#....#.....#................
 ................#....#..#.....#.....#.....#...#.................
 ................#....#..#####.#####.#####..###..................
+```
+
+`draw` goes the other way: it reads frames written in that legend, with `#` lighting the `foreground` colour, centres a drawing smaller than the panel, and starts a new frame after each blank line (`frame_ms` sets how long each one shows). Planning this red heart returns *Show the drawing on desk-sign as a still: 5 packets, about 1 s to upload*:
+
+```
+plan draw value=
+.RR.RR.
+RRRRRRR
+RRRRRRR
+.RRRRR.
+..RRR..
+...R...
+```
+
+`draw` suits a small picture. Composing a full panel that way means counting characters across 64-column rows, so `scene` lets an agent draw each sprite once and place copies by coordinate instead:
+
+```json
+{
+  "sprites": {
+    "ghost": ["...XXXX...", ".XXXXXXXX.", "XXXXXXXXXX", "XXWWXXWWXX", "XXWBXXWBXX",
+              "XXXXXXXXXX", "XXXXXXXXXX", "XXXXXXXXXX", "XXXXXXXXXX", "X.XX..XX.X"]
+  },
+  "items": [
+    {"sprite": "ghost", "at": [12, 3], "colors": {"X": "cyan"}},
+    {"sprite": "ghost", "at": [24, 3], "colors": {"X": "red"}}
+  ]
+}
+```
+
+In a sprite `.` is transparent, legend letters light their colour, and any other letter, like `X` here, takes the colour each copy's `colors` gives it. `at` is the sprite's top-left corner and may hang off the panel; later placements draw on top. `items` appear in every frame, and an optional `frames` list adds each frame's own placements on top of them, so a four-frame Pac-Man chomp is five small sprites and a list of positions. It compiles to exactly the packets of the same animation hand-drawn as 2,560 characters of `draw`.
+
+`plan` dry-runs the real delivery. Its `plan_id` is a hash of the exact packet bytes and the panel they go to, and its `next` field holds the matching `accept` call, which needs only that `plan_id`: the server remembers its last 32 plans (and forgets them on restart, after which `accept` also takes the plan's `arguments`). `accept` plans the same content again and refuses if the bytes have changed since (an edited source file, a re-profiled panel), so what goes out is what was reviewed. Scrolling text goes out as the panel's native firmware scroll, as with `coolled text`. An upload still running after 25 seconds carries on in the background, where `describe upload` follows it; a full 79-frame upload takes about a minute on the reference panel.
+
+Install with `pip install -e '.[mcp]'` and register the server with your client. Give the command as an absolute path, because MCP clients start servers outside your virtualenv, and add `--execute` only if agents may send:
+
+```json
+{
+  "mcpServers": {
+    "coolled-verbs": {
+      "command": "/path/to/coolled-sign-controller/.venv/bin/opensign-verbs",
+      "args": ["--profile", "/path/to/device_profile.local.json", "--execute"]
+    }
+  }
+}
 ```
 
 ## Verified on hardware
@@ -268,7 +315,7 @@ Claims move `unverified → experimental → verified` and never skip a step (`v
 ## Safety
 
 - The API listens on `127.0.0.1` with **no built-in authentication** — never expose it without an authenticated reverse proxy.
-- CLIs write to the panel by default (`--dry-run` to preview); the API stays render-only until started with `--execute`.
+- CLIs write to the panel by default (`--dry-run` to preview); the API and the MCP server stay render-only until started with `--execute`, and the MCP server's `accept` sends only a plan whose bytes still match its `plan_id`.
 - A command or schema must be at least `experimental` (with cited evidence) before the codec will encode it.
 - Treat captures as sensitive: never commit private keys, pairing data, device identifiers, or unrelated personal traffic.
 
@@ -290,12 +337,12 @@ src/opensign/
   contracts.py           Shared device / profile / frame-bundle contracts
   hardware_probe/        Discovery, GATT inspection, profile generation
   protocol/              Codec, packet framing, chunking, BLE transport, ProtocolRuntime
-  animation/             Rendering, temporal colour, frame bundles, previews, render cache
-  sdk/                   Registry, API, MCP render surface, scheduler, orchestration, trace state
+  animation/             Rendering, temporal colour, scenes, frame bundles, previews, render cache
+  sdk/                   Registry, API, MCP server, scheduler, orchestration, trace state
 schema/                  JSON Schemas for the stable contracts
 scripts/                 Live hardware harness + one-shot experiments
 evidence/                Captures and provenance
-examples/                Source clips, generated previews (incl. the README gallery), panel recordings
+examples/                Source clips, agent-drawn scenes, generated previews (incl. the README gallery), panel recordings
 specs/                   Internal design specs (SMDL) — not needed to run anything
 protocol.md              Evidence ledger and promotion process
 ```

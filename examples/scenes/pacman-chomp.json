@@ -1,0 +1,100 @@
+{
+  "frame_ms": 150,
+  "sprites": {
+    "ghost_a": [
+      "...XXXX...",
+      ".XXXXXXXX.",
+      "XXXXXXXXXX",
+      "XXWWXXWWXX",
+      "XXWBXXWBXX",
+      "XXXXXXXXXX",
+      "XXXXXXXXXX",
+      "XXXXXXXXXX",
+      "XXXXXXXXXX",
+      "X.XX..XX.X"
+    ],
+    "ghost_b": [
+      "...XXXX...",
+      ".XXXXXXXX.",
+      "XXXXXXXXXX",
+      "XXWWXXWWXX",
+      "XXWBXXWBXX",
+      "XXXXXXXXXX",
+      "XXXXXXXXXX",
+      "XXXXXXXXXX",
+      "XXXXXXXXXX",
+      ".XX.XX.XX."
+    ],
+    "pac_open": [
+      "...YYYY...",
+      ".YYYYYYYY.",
+      ".YYYYYYY..",
+      "YYYYYY....",
+      "YYYYY.....",
+      "YYYYY.....",
+      "YYYYYY....",
+      ".YYYYYYY..",
+      ".YYYYYYYY.",
+      "...YYYY..."
+    ],
+    "pac_half": [
+      "...YYYY...",
+      ".YYYYYYYY.",
+      ".YYYYYYYY.",
+      "YYYYYYYY..",
+      "YYYYYY....",
+      "YYYYYY....",
+      "YYYYYYYY..",
+      ".YYYYYYYY.",
+      ".YYYYYYYY.",
+      "...YYYY..."
+    ],
+    "pac_shut": [
+      "...YYYY...",
+      ".YYYYYYYY.",
+      ".YYYYYYYY.",
+      "YYYYYYYYYY",
+      "YYYYYYYYYY",
+      "YYYYYYYYYY",
+      "YYYYYYYYYY",
+      ".YYYYYYYY.",
+      ".YYYYYYYY.",
+      "...YYYY..."
+    ],
+    "dot": [
+      "WW",
+      "WW"
+    ]
+  },
+  "items": [
+    {"sprite": "dot", "at": [50, 7]},
+    {"sprite": "dot", "at": [55, 7]},
+    {"sprite": "dot", "at": [60, 7]}
+  ],
+  "frames": [
+    [
+      {"sprite": "ghost_a", "at": [0, 3], "colors": {"X": "cyan"}},
+      {"sprite": "ghost_a", "at": [12, 3], "colors": {"X": "magenta"}},
+      {"sprite": "ghost_a", "at": [24, 3], "colors": {"X": "red"}},
+      {"sprite": "pac_open", "at": [37, 3]}
+    ],
+    [
+      {"sprite": "ghost_b", "at": [0, 3], "colors": {"X": "cyan"}},
+      {"sprite": "ghost_b", "at": [12, 3], "colors": {"X": "magenta"}},
+      {"sprite": "ghost_b", "at": [24, 3], "colors": {"X": "red"}},
+      {"sprite": "pac_half", "at": [37, 3]}
+    ],
+    [
+      {"sprite": "ghost_a", "at": [0, 3], "colors": {"X": "cyan"}},
+      {"sprite": "ghost_a", "at": [12, 3], "colors": {"X": "magenta"}},
+      {"sprite": "ghost_a", "at": [24, 3], "colors": {"X": "red"}},
+      {"sprite": "pac_shut", "at": [37, 3]}
+    ],
+    [
+      {"sprite": "ghost_b", "at": [0, 3], "colors": {"X": "cyan"}},
+      {"sprite": "ghost_b", "at": [12, 3], "colors": {"X": "magenta"}},
+      {"sprite": "ghost_b", "at": [24, 3], "colors": {"X": "red"}},
+      {"sprite": "pac_half", "at": [37, 3]}
+    ]
+  ]
+}

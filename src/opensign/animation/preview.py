@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -139,6 +140,58 @@ def text_preview(image: Image.Image, *, style: str = "auto") -> str:
     ]
     width = image.width
     return "\n".join("".join(chars[y * width : (y + 1) * width]) for y in range(image.height))
+
+
+_LEGEND_RGB = {char: bytes(255 if on else 0 for on in key) for key, char in TEXT_LEGEND.items()}
+
+
+def _text_rows(text: str) -> list[str]:
+    """The rows of a frame written as text, trimmed, after checking they share one width."""
+    rows = [row.strip() for row in text.strip().splitlines()]
+    if not rows or not rows[0]:
+        raise ValueError("the drawing is empty")
+    width = len(rows[0])
+    for y, row in enumerate(rows, start=1):
+        if len(row) != width:
+            raise ValueError(f"row {y} is {len(row)} wide but row 1 is {width}; every row must be the same width")
+    return rows
+
+
+def image_from_text(
+    text: str,
+    *,
+    foreground: tuple[int, int, int] = (255, 255, 255),
+    colors: Mapping[str, tuple[int, int, int]] | None = None,
+) -> Image.Image:
+    """Read a frame written one character per pixel: the inverse of ``text_preview``.
+
+    ``.`` is off, a TEXT_LEGEND letter (either case) lights that colour, ``#`` lights
+    ``foreground``, and ``colors`` gives any other letter a colour or recolours a
+    legend one. Whitespace around a row is ignored, but every row must be the same
+    width, so a miscounted row is an error instead of a skewed picture.
+    """
+    rows = _text_rows(text)
+    palette = {**_LEGEND_RGB, **{key.upper(): bytes(rgb[:3]) for key, rgb in (colors or {}).items()}}
+    lit = bytes(foreground[:3])
+    letters = "".join(char for char in TEXT_LEGEND.values() if char != ".")
+    pixels = bytearray()
+    for y, row in enumerate(rows, start=1):
+        for x, char in enumerate(row, start=1):
+            rgb = lit if char == "#" else palette.get(char.upper())
+            if rgb is None:
+                raise ValueError(
+                    f"row {y}, column {x}: {char!r} is not in the legend; "
+                    f"use '.' for off, '#' for the foreground, or one of {letters}"
+                )
+            pixels += rgb
+    return Image.frombytes("RGB", (len(rows[0]), len(rows)), bytes(pixels))
+
+
+def mask_from_text(text: str) -> Image.Image:
+    """Which pixels a frame written as text draws: 255 for every one but ``.``, which is 0."""
+    rows = _text_rows(text)
+    covered = bytes(0 if char == "." else 255 for row in rows for char in row)
+    return Image.frombytes("L", (len(rows[0]), len(rows)), covered)
 
 
 def build_parser() -> argparse.ArgumentParser:

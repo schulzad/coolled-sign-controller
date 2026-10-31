@@ -1,0 +1,95 @@
+{
+  "frame_ms": 300,
+  "sprites": {
+    "tall": [
+      "...X...",
+      "...X...",
+      "..XXX..",
+      ".XXXXX.",
+      ".XYXYX.",
+      ".XXXXX.",
+      ".XYX.X.",
+      ".XXXXX.",
+      ".X.XYX.",
+      ".XXXXX.",
+      ".XYXYX.",
+      ".XXXXX.",
+      ".XXXXX."
+    ],
+    "mid": [
+      "XXXXXXXXX",
+      "XYX.XYXYX",
+      "XXXXXXXXX",
+      "XYXYX.XYX",
+      "XXXXXXXXX",
+      "X.XYXYXYX",
+      "XXXXXXXXX",
+      "XYXYXYX.X",
+      "XXXXXXXXX"
+    ],
+    "wide": [
+      "XXXXXXXXXXXX",
+      "XYXYX.XYXYXX",
+      "XXXXXXXXXXXX",
+      "X.XYXYXYX.XX",
+      "XXXXXXXXXXXX",
+      "XYXYXYX.XYXX",
+      "XXXXXXXXXXXX"
+    ],
+    "short": [
+      "XXXXXX",
+      "XYXYXX",
+      "XXXXXX",
+      "XX.XYX",
+      "XXXXXX"
+    ],
+    "moon": [
+      "...WW..",
+      "..WW...",
+      ".WWW...",
+      ".WWW...",
+      ".WWW...",
+      "..WW...",
+      "...WW.."
+    ],
+    "star": ["W"],
+    "sparkle": [
+      ".W.",
+      "WWW",
+      ".W."
+    ],
+    "meteor": [
+      "W...",
+      ".W..",
+      "..W.",
+      "...W"
+    ]
+  },
+  "items": [
+    {"sprite": "short", "at": [0, 11], "colors": {"X": "magenta"}},
+    {"sprite": "tall", "at": [5, 3], "colors": {"X": "blue"}},
+    {"sprite": "mid", "at": [12, 7], "colors": {"X": "magenta"}},
+    {"sprite": "wide", "at": [22, 9], "colors": {"X": "blue"}},
+    {"sprite": "tall", "at": [33, 3], "colors": {"X": "magenta"}},
+    {"sprite": "mid", "at": [41, 7], "colors": {"X": "blue"}},
+    {"sprite": "short", "at": [51, 11], "colors": {"X": "magenta"}},
+    {"sprite": "short", "at": [58, 11], "colors": {"X": "blue"}},
+    {"sprite": "moon", "at": [24, 1]},
+    {"sprite": "star", "at": [2, 2]},
+    {"sprite": "star", "at": [3, 7]},
+    {"sprite": "star", "at": [14, 2]},
+    {"sprite": "star", "at": [19, 4]},
+    {"sprite": "star", "at": [33, 1]},
+    {"sprite": "star", "at": [43, 2]},
+    {"sprite": "star", "at": [47, 5]},
+    {"sprite": "star", "at": [53, 3]},
+    {"sprite": "star", "at": [57, 7]},
+    {"sprite": "star", "at": [61, 2]}
+  ],
+  "frames": [
+    [{"sprite": "sparkle", "at": [13, 1]}, {"sprite": "sparkle", "at": [52, 2]}],
+    [{"sprite": "sparkle", "at": [1, 1]}, {"sprite": "sparkle", "at": [46, 4]}, {"sprite": "meteor", "at": [36, 0]}],
+    [{"sprite": "sparkle", "at": [18, 3]}, {"sprite": "sparkle", "at": [60, 1]}, {"sprite": "meteor", "at": [41, 1]}],
+    [{"sprite": "sparkle", "at": [32, 0]}, {"sprite": "sparkle", "at": [42, 1]}]
+  ]
+}

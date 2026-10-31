@@ -75,6 +75,103 @@ Module("FeatureBoard") {
         kernel: "FeatureBoardKernel"
         tags: ["card:F5", "status:proposed", "needs-hardware-evidence"]
       }
+
+      Directive("/scene_motion") {
+        description: "Card F6. Declared motion for scene placements: a placement takes a per-frame step (\"move\": [dx, dy]) and the compositor works out its position in every frame, so an agent states a path once instead of writing a placement per frame."
+        metaphor: "Chalking the arrow on the pegboard instead of re-hanging the tool at every hook."
+        parameters: {
+          move: { type: "array[int]", description: "Pixels the placement travels each frame, [dx, dy].", required: true },
+          length: { type: "int", description: "Frames in the scene, when no frames list or cycle sets it.", required: false },
+          wrap: { type: "bool", description: "Re-enter from the opposite edge after leaving the panel, so the loop has no seam.", required: false, default: false }
+        }
+        actions: { count: "scene_frame_count", expand: "expand_motion" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F6", "status:ready", "scene"]
+      }
+
+      Directive("/scene_cycle") {
+        description: "Card F7. Cycles for scene placements: a placement lists one position (\"cycle\": [[x, y], ...]) or one sprite (\"sprite\": [\"open\", \"shut\"]) per frame and repeats the list, so twinkles, blinks and walk cycles are one placement each."
+        metaphor: "A rotating tag on one hook, showing a different card each time you pass."
+        parameters: {
+          cycle: { type: "array[array[int]]", description: "Positions to visit, one per frame, then repeat.", required: false },
+          sprite: { type: "array[string]", description: "Sprites to show, one per frame, then repeat.", required: false }
+        }
+        actions: { count: "scene_frame_count", expand: "expand_cycle" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F7", "status:ready", "scene"]
+      }
+
+      Directive("/scene_anchor") {
+        description: "Card F8. Anchors for scene placements: at may name an edge or the centre instead of a pixel (\"at\": [22, \"bottom\"]), measured from the sprite's own size, so nobody works out the panel height minus the sprite's."
+        metaphor: "Hanging a tool by its bottom hook instead of measuring down from the ceiling."
+        parameters: {
+          x: { type: "int|string", description: "A pixel column, or left, centre or right.", required: true },
+          y: { type: "int|string", description: "A pixel row, or top, centre or bottom.", required: true }
+        }
+        actions: { resolve: "resolve_anchor" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F8", "status:ready", "scene"]
+      }
+
+      Directive("/lean_results") {
+        description: "Card F9. Lean results from render and plan: when a picture comes back, leave the frames' text grids out unless text is asked for, since an agent that can see the picture rarely needs a thousand characters of grid per frame as well."
+        metaphor: "Handing over the photo of the finished wall, with the tape-measure readings on request."
+        parameters: {
+          text: { type: "bool", description: "Return each frame's text grid as well; defaults to true only when picture is off.", required: false }
+        }
+        actions: { trim: "lean_frames" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F9", "status:ready", "mcp:coolled-verbs"]
+      }
+
+      Directive("/scene_shapes") {
+        description: "Card F10. Shapes as scene placements: a placement may be a pie, circle, rectangle, line or text instead of a sprite, drawn in the panel's own 1-bit colours, so a Pac-Man is a pie of size 10 with a 70-degree mouth rather than ten rows of letters."
+        metaphor: "Reaching for the stencil drawer for circles and arrows, and drawing freehand only the odd tool."
+        parameters: {
+          shape: { type: "enum", options: ["pie", "circle", "rect", "line", "text"], description: "What to draw.", required: true },
+          size: { type: "array[int]", description: "Width and height; a pie or circle takes one diameter.", required: true },
+          color: { type: "string", description: "A legend letter, a colour name or #rrggbb.", required: false, default: "white" },
+          mouth: { type: "int", description: "pie only: the opening in degrees, facing right.", required: false, default: 0 }
+        }
+        actions: { draw: "rasterize_shape" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F10", "status:proposed", "scene"]
+      }
+
+      Directive("/scene_scroll") {
+        description: "Card F11. Scroll a whole scene across the panel: its frames are composited as one sprite that enters one edge and leaves the other while its own frames keep cycling, the way coolled animation --scroll treats a GIF."
+        metaphor: "Sliding the whole pegboard past the window instead of moving each tool along it."
+        parameters: {
+          scroll_px: { type: "int", description: "Pixels the scene moves each frame.", required: false, default: 2 },
+          direction: { type: "enum", options: ["left", "right"], description: "Which way it travels.", required: false, default: "left" }
+        }
+        actions: { travel: "scroll_scene" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F11", "status:proposed", "scene"]
+      }
+
+      Directive("/scene_files") {
+        description: "Card F12. Scene files everywhere: a scene saved as JSON, which may carry its own frame_ms, plays from coolled scene FILE and from the MCP server's scene noun by path, compiling to the same packets and plan_id as the same scene passed inline."
+        metaphor: "Filing the template in the drawer so anyone can hang the same outline again."
+        parameters: {
+          path: { type: "string", description: "The scene file.", required: true },
+          preview: { type: "string", description: "coolled scene only: write a preview to this path instead of sending.", required: false }
+        }
+        actions: { load: "load_scene_file" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F12", "status:ready", "scene", "cli"]
+      }
+
+      Directive("/sprite_mirror_erase") {
+        description: "Card F13. Mirror and erase in scenes: a placement may flip its sprite (\"mirror\": \"x\" or \"y\") so one Pac-Man faces both ways, and a sprite's K paints off over what lies beneath, so a frame can change a few pixels of an earlier placement instead of redrawing the sprite."
+        metaphor: "Turning a template over to trace its mirror image, with an eraser on the same hook."
+        parameters: {
+          mirror: { type: "enum", options: ["x", "y"], description: "Flip the sprite left-to-right (x) or top-to-bottom (y).", required: false }
+        }
+        actions: { stamp: "stamp_sprite" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F13", "status:ready", "scene"]
+      }
     }
 
     Bloom {
@@ -339,6 +436,183 @@ Module("FeatureBoard") {
               return the recorded rows
         tags: ["experiment", "hardware", "needs-hardware-evidence"]
       }
+
+      Function("scene_frame_count") {
+        description: "Decide how many frames a scene has before anything is stamped: the length it states, or else the least common multiple of its frames list and every cycle in it, refused when that exceeds the upload's budget."
+        metaphor: "Counting the hooks before hanging anything."
+        input_parameters: {
+          scene: { type: "object", description: "The scene: sprites, items, and optional frames and length.", required: true },
+          budget_frames: { type: "int", description: "Frames one upload may carry (79 at 64x16).", required: true }
+        }
+        output_format: {
+          frames: "int Frames the scene compiles to.",
+          raises: "ValueError — when the count exceeds budget_frames, naming both."
+        }
+        implementation: |
+          def scene_frame_count(scene, budget_frames):
+              if scene states a length: count = that length
+              else: count = the least common multiple of the frames list's length and every cycle's length, or 1
+              if count > budget_frames:
+                  refuse before rendering, naming count and budget_frames
+              return count
+        tags: ["pure", "budget"]
+      }
+
+      Function("expand_motion") {
+        description: "Turn one moving placement into one placement per frame, its position stepping by move each frame. With wrap, a sprite that leaves one edge re-enters from the opposite one, so a loop has no seam."
+        metaphor: "Marking every hook the tool will pass, from the one chalked arrow."
+        input_parameters: {
+          placement: { type: "object", description: "A placement with at and move, and optionally wrap.", required: true },
+          frame_count: { type: "int", description: "From scene_frame_count.", required: true },
+          panel_width: { type: "int", description: "The panel's width, which wrap folds positions into.", required: true }
+        }
+        output_format: {
+          placements: "list[object] One placement per frame, each at its own position."
+        }
+        implementation: |
+          def expand_motion(placement, frame_count, panel_width):
+              for each frame index i below frame_count:
+                  position = placement.at plus i times placement.move
+                  if placement.wrap: fold position so the sprite re-enters from the opposite edge
+                  yield the placement at position
+        tags: ["pure"]
+      }
+
+      Function("expand_cycle") {
+        description: "Turn one cycling placement into one placement per frame: frame i takes entry i modulo the cycle's length, for its position, its sprite, or both."
+        metaphor: "Turning the tag on its hook once each time someone passes."
+        input_parameters: {
+          placement: { type: "object", description: "A placement whose cycle lists positions or whose sprite lists names.", required: true },
+          frame_count: { type: "int", description: "From scene_frame_count.", required: true }
+        }
+        output_format: {
+          placements: "list[object] One placement per frame."
+        }
+        implementation: |
+          def expand_cycle(placement, frame_count):
+              for each frame index i below frame_count:
+                  position = the cycle's entry i modulo its length, or placement.at without a cycle
+                  sprite = the sprite list's entry i modulo its length, or the one sprite
+                  yield the placement with that position and sprite
+        tags: ["pure"]
+      }
+
+      Function("resolve_anchor") {
+        description: "Turn a named edge or centre into a pixel from the sprite's size and the panel's: left and top are 0, right and bottom put the sprite flush against that edge, centre splits the difference, and a number stays as it is."
+        metaphor: "Reading the hook's position off the board's edge instead of the ruler."
+        input_parameters: {
+          at: { type: "array", description: "[x, y], each a number or a name.", required: true },
+          sprite_size: { type: "array[int]", description: "The sprite's width and height.", required: true },
+          panel_size: { type: "array[int]", description: "The panel's width and height.", required: true }
+        }
+        output_format: {
+          position: "list[int] [x, y] in pixels from the panel's top-left corner."
+        }
+        implementation: |
+          def resolve_anchor(at, sprite_size, panel_size):
+              for each axis:
+                  left or top is 0, right or bottom is the panel's size minus the sprite's,
+                  centre is half that, rounded down, and a number is kept
+              return the two pixels
+        tags: ["pure"]
+      }
+
+      Function("lean_frames") {
+        description: "Drop each frame's text grid from a render or plan result when a picture came with it, keeping every frame's index and duration, unless the caller asked for text."
+        metaphor: "Leaving the measurements in the drawer when the photo already says it."
+        input_parameters: {
+          payload: { type: "object", description: "The result's JSON.", required: true },
+          picture: { type: "bool", description: "Whether a picture is attached.", required: true },
+          text: { type: "bool", description: "Whether text was asked for; defaults to not picture.", required: false }
+        }
+        output_format: {
+          payload: "object The result, with or without its frames' text."
+        }
+        implementation: |
+          def lean_frames(payload, picture, text):
+              if text is unset: text = not picture
+              if not text: remove the text grid from every frame, keeping index and duration
+              return payload
+        tags: ["pure", "mcp"]
+      }
+
+      Function("rasterize_shape") {
+        description: "Draw a shape placement as a sprite: a pie, circle, rectangle, line or text in its colour, without antialiasing, each channel cut at the codec's 127, and transparent everywhere else, so it then stamps exactly like a drawn sprite."
+        metaphor: "Tracing round the stencil, then hanging the tracing like any other outline."
+        input_parameters: {
+          shape: { type: "object", description: "The shape placement: shape, size, color, and mouth or text.", required: true }
+        }
+        output_format: {
+          sprite: "Image — an RGBA sprite, transparent outside the shape."
+        }
+        implementation: |
+          def rasterize_shape(shape):
+              canvas = a transparent image of the shape's size
+              draw the pie, circle, rectangle, line or text in its colour with antialiasing off
+              cut every channel at 127, as the codec does
+              return canvas
+        tags: ["pure"]
+      }
+
+      Function("scroll_scene") {
+        description: "Composite a scene's frames as one sprite marching across the panel, its own frames cycling as it goes, through the same path as create_scrolling_gif_bundle, and thin the pass to the budget."
+        metaphor: "Sliding the whole board past the window, one notch per tick."
+        input_parameters: {
+          frames: { type: "array[Image]", description: "The scene's compiled frames.", required: true },
+          scroll_px: { type: "int", description: "Pixels per frame.", required: false, default: 2 },
+          direction: { type: "enum", options: ["left", "right"], description: "Which way it travels.", required: false, default: "left" },
+          budget_frames: { type: "int", description: "Frames one upload may carry.", required: true }
+        }
+        output_format: {
+          frames: "list[Image] One pass across the panel, thinned to the budget."
+        }
+        implementation: |
+          def scroll_scene(frames, scroll_px, direction, budget_frames):
+              treat the scene's frames as an animated sprite as wide as the scene
+              march it from one edge to the other, scroll_px per frame, cycling its frames
+              thin the pass to budget_frames, as an animation scroll is
+              return the frames
+        tags: ["budget"]
+      }
+
+      Function("load_scene_file") {
+        description: "Read a scene file and check it the way the scene noun checks an inline scene, taking frame_ms from the file when it carries one."
+        metaphor: "Taking the template from its drawer and checking it is the one on the label."
+        input_parameters: {
+          path: { type: "string", description: "The scene file, JSON.", required: true },
+          frame_ms: { type: "int", description: "The hold to use when the file names none.", required: false, default: 200 }
+        }
+        output_format: {
+          scene: "object The scene, checked.",
+          frame_ms: "int The hold each frame shows.",
+          raises: "ValueError — when the file is not a scene, naming what is wrong and where."
+        }
+        implementation: |
+          def load_scene_file(path, frame_ms):
+              scene = the JSON in path
+              check scene as the scene noun checks an inline one
+              return scene, and the file's frame_ms when it has one, else frame_ms
+        tags: ["io", "cli", "mcp"]
+      }
+
+      Function("stamp_sprite") {
+        description: "Stamp one sprite onto a frame, flipped first when the placement asks: its lit pixels draw on top, K pixels turn what lies beneath off, and . leaves it showing."
+        metaphor: "Pressing the stamp down, eraser edge and all."
+        input_parameters: {
+          canvas: { type: "Image", description: "The frame so far.", required: true },
+          sprite: { type: "string", description: "The sprite's rows.", required: true },
+          placement: { type: "object", description: "The placement: at, colors, and optionally mirror.", required: true }
+        }
+        output_format: {
+          canvas: "Image — the frame with the sprite stamped on it."
+        }
+        implementation: |
+          def stamp_sprite(canvas, sprite, placement):
+              image = the sprite in the placement's colours, flipped on its mirror axis when it has one
+              paste the lit pixels at placement.at, and paste black where the sprite has K
+              return canvas
+        tags: ["pure"]
+      }
     }
 
     Sprout {
@@ -396,13 +670,87 @@ Module("FeatureBoard") {
         ]
         tags: ["pipe", "experiment"]
       }
+
+      Chain("SceneMotionFlow") {
+        description: "Count the frames, then step every moving placement through them before stamping."
+        metaphor: "Count the hooks, then follow the arrow."
+        links: [
+          { source: "/scene_motion", target: "scene_frame_count", description: "The scene's length, refused over budget." },
+          { source: "scene_frame_count", target: "expand_motion", description: "One position per frame." }
+        ]
+        tags: ["pipe", "budget"]
+      }
+
+      Chain("SceneCycleFlow") {
+        description: "Count the frames as the cycles' least common multiple, then give each frame its entry."
+        metaphor: "Count the hooks, then turn the tags."
+        links: [
+          { source: "/scene_cycle", target: "scene_frame_count", description: "The least common multiple, refused over budget." },
+          { source: "scene_frame_count", target: "expand_cycle", description: "Entry i modulo the cycle's length." }
+        ]
+        tags: ["pipe", "budget"]
+      }
+
+      Chain("SceneAnchorFlow") {
+        description: "Named edges become pixels before the sprite is stamped."
+        metaphor: "Read the edge, then hang."
+        links: [
+          { source: "/scene_anchor", target: "resolve_anchor", description: "Names to pixels from the sprite's size." }
+        ]
+        tags: ["pipe"]
+      }
+
+      Chain("LeanResultsFlow") {
+        description: "A result with a picture drops its text grids unless asked."
+        metaphor: "Photo first, measurements on request."
+        links: [
+          { source: "/lean_results", target: "lean_frames", description: "Trim the grids when a picture is attached." }
+        ]
+        tags: ["pipe", "mcp"]
+      }
+
+      Chain("SceneShapesFlow") {
+        description: "A shape becomes a sprite, then stamps like one."
+        metaphor: "Stencil, then hang."
+        links: [
+          { source: "/scene_shapes", target: "rasterize_shape", description: "Geometry to 1-bit pixels, transparent outside." }
+        ]
+        tags: ["pipe"]
+      }
+
+      Chain("SceneScrollFlow") {
+        description: "The compiled scene travels across the panel as one sprite, thinned to the budget."
+        metaphor: "Slide the board past the window."
+        links: [
+          { source: "/scene_scroll", target: "scroll_scene", description: "March the scene's frames across, cycling as they go." }
+        ]
+        tags: ["pipe", "budget"]
+      }
+
+      Chain("SceneFilesFlow") {
+        description: "A saved scene is read and checked, then compiles exactly as the inline scene does."
+        metaphor: "From the drawer to the wall."
+        links: [
+          { source: "/scene_files", target: "load_scene_file", description: "Read and check the file, with its own frame_ms." }
+        ]
+        tags: ["pipe", "io"]
+      }
+
+      Chain("MirrorEraseFlow") {
+        description: "Each placement is flipped if asked, then stamped with its erasing pixels."
+        metaphor: "Turn the template, press the stamp."
+        links: [
+          { source: "/sprite_mirror_erase", target: "stamp_sprite", description: "Mirror, then paste lit pixels and K as off." }
+        ]
+        tags: ["pipe"]
+      }
     }
 
     Kernels {
       Kernel("FeatureBoardKernel") {
         description: "Governs the board: keeps every card design-only until it graduates into its owning layer spec, and holds each card to the device facts it must respect."
         metaphor: "The shop foreman who checks the outline before any tool goes on the wall."
-        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow']
+        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow', 'SceneMotionFlow', 'SceneCycleFlow', 'SceneAnchorFlow', 'LeanResultsFlow', 'SceneShapesFlow', 'SceneScrollFlow', 'SceneFilesFlow', 'MirrorEraseFlow']
         invariants: [
           "DESIGN ONLY: No card on this board is built. A card graduates by moving its Functions into its owning layer module's spec when the code lands, and leaves the board.",
           "BUDGET FIRST: Every frame a card adds (gap frames, repeated program pages) counts against the measured 30,720-byte 0x04 payload ceiling, 79 frames at 64x16 after the 27-byte header, and is planned before rendering, never truncated after.",
@@ -410,7 +758,8 @@ Module("FeatureBoard") {
           "NOT STREAMING: Music bars are a small dedicated host-pushed command, not general frame streaming, which stays rejected; no card reopens frame_streaming.",
           "ONE GLOBAL SPEED: Per-page or per-gap timing on a 0x04 upload is expressed by repeating frames against one ms-per-frame speed, never by assuming per-frame durations the device does not store.",
           "PANEL-ONLY COLOUR: Temporal (FRC) colour exists only on the physical panel, so no card validates it from a preview.",
-          "STOP-AND-WAIT BY DEFAULT: The transport sends the next chunk only after the previous chunk's ack until a recorded hardware test shows the panel accepts a wider window, and a non-zero ack status inside any window stops the transfer."
+          "STOP-AND-WAIT BY DEFAULT: The transport sends the next chunk only after the previous chunk's ack until a recorded hardware test shows the panel accepts a wider window, and a non-zero ack status inside any window stops the transfer.",
+          "SCENES KEEP THEIR BYTES: A scene that uses none of a card's new fields compiles to exactly the packets it does today, so its plan_id is unchanged and saved scenes never need re-planning when a scene card lands."
         ]
         tags: ["governance", "design-only"]
       }
@@ -427,6 +776,8 @@ Module("FeatureBoard") {
       - F2 to CoolLEDXProtocol (the 0x01 encoder) and SignControlService (the live loop), with promotion through DeviceProfileLedger.
       - F4 to SignControlService and PixelFramePipeline, preflighted by CoolLEDXProtocol.
       - F5 to GuardedTransport (the ack window), with the measured window recorded through DeviceProfileLedger.
+      - F6, F7, F8, F10, F11 and F13 to PixelFramePipeline, which owns the scene compositor (opensign.animation.scene).
+      - F9 to the coolled-verbs MCP server (opensign.sdk.verbs_mcp), which no layer spec covers yet; F12 to the coolled CLI and that server.
       - All wire encoding and every BLE write to CoolLEDXProtocol and GuardedTransport; nothing on this board touches the radio.
     cards: |
       F1 Scroll gap -- status: ready.
@@ -456,17 +807,63 @@ Module("FeatureBoard") {
         Shape: an opt-in ack window that keeps up to N chunks in flight and consumes acks in order; N=1 is today's stop-and-wait.
         Risk: the panel may take only one chunk at a time (it likely commits each chunk to storage; uploaded text survives power loss on an identical panel), in which case a wider window draws 0x05 data-ID rejections. The best case is probably about 2x, bounded by the panel's own per-chunk time.
         Accept: probe_ack_window records seconds per chunk and the first non-zero status at windows 1 to 4; the default only changes after a window shows a speed-up with zero errors on hardware, recorded in DeviceProfileLedger.
+      F6 Declared motion -- status: ready.
+        Why: moving anything means writing its position into every frame. The night skyline's shooting star took one placement per frame, and a Pac-Man crossing the panel would take one per step.
+        Shape: a placement takes "move": [dx, dy] in pixels per frame and optionally "wrap": true; scene_frame_count sets the length, and expand_motion turns the placement into one per frame before anything is stamped.
+        Cost: one frame per step against the 79-frame budget, 384 B each at 64x16: crossing 64 px at 2 px per frame is 32 frames, plus half the sprite's width to clear the edge.
+        Accept: a moving placement equals the per-frame placements it replaces; an over-budget motion is refused before rendering, naming its frame count.
+      F7 Cycles -- status: ready.
+        Why: twinkles, blinks and walk cycles repeat a short list, yet the skyline's sparkles and the Pac-Man chomp were written out frame by frame.
+        Shape: a placement takes "cycle": [[x, y], ...] for its positions, or a list of names for "sprite"; frame i uses entry i modulo the list's length, and the scene runs to the least common multiple of its cycles unless it states a length.
+        Cost: frames = that least common multiple, so cycles of 4 and 3 cost 12; a mix that exceeds the budget is refused, never truncated.
+        Accept: the Pac-Man chomp rewritten with cycles compiles to the same packets as the frame-by-frame scene in examples/scenes (plan_id 54b0da78a1eebd99 on the reference panel).
+      F8 Anchors -- status: ready.
+        Why: every building in the skyline needed 16 minus its height worked out by hand to stand on the bottom edge.
+        Shape: in at, x may be left, centre or right and y top, centre or bottom, resolved by resolve_anchor from the sprite's size and the panel's; numbers keep their meaning.
+        Cost: none; placement only.
+        Accept: [x, "bottom"] lands where [x, 16 - height] does on a 16-row panel.
+      F9 Lean results -- status: ready.
+        Why: next to the picture the text grids are mostly dead weight; four frames came back as about 4,000 characters of grid beside a picture the agent judged at a glance.
+        Shape: render and plan take text, defaulting to true only when picture is off; with a picture, each frame keeps its index and duration but drops its grid.
+        Cost: none on the panel; far fewer tokens per call.
+        Accept: picture=false still returns every grid, text=true restores them beside the picture, and no packet or plan_id changes.
+      F10 Scene shapes -- status: proposed.
+        Why: some sprites are geometry. Pac-Man is a pie slice and the moon two overlapping circles, and an agent states geometry more reliably than it draws rows.
+        Shape: a placement may give "shape": pie, circle, rect, line or text, with size, color, and mouth (pie, in degrees) or the text; rasterize_shape draws it without antialiasing and then it stamps like a sprite.
+        Open: whether text belongs here or stays with render_wide_text's font, and how a pie's mouth rounds at 10 px.
+        Cost: none; placement only.
+        Accept: a pie with mouth 0 equals a filled circle of the same size, and shapes and sprites layer in placement order.
+      F11 Scrolling scenes -- status: proposed.
+        Why: a scene is a still or an in-place loop, while an animation can already travel across the panel with coolled animation --scroll.
+        Shape: scene scroll with scroll_px and direction composites the scene's frames as one sprite marching across the panel, cycling as it goes, through the same path as create_scrolling_gif_bundle.
+        Cost: one pass is (panel width + scene width) / scroll_px frames, thinned to the 79-frame budget like an animation scroll: a full-width scene at 2 px is 64 frames.
+        Accept: scrolling a one-frame scene equals coolled animation --scroll of the same image, and the pass is thinned, never truncated.
+      F12 Scene files -- status: ready.
+        Why: the art an agent draws should outlive the conversation. examples/scenes holds the first two pieces, and replaying them today means pasting the JSON back into an MCP call or sending their compiled bundles with coolled send.
+        Shape: coolled scene FILE, with the usual send flags and --preview, and the MCP server's scene noun with a path both read a scene file, which may carry its own frame_ms, through load_scene_file.
+        Cost: none.
+        Accept: a scene file compiles to the same packets as the same scene passed inline, the same plan_id, and scripts/render_scenes.py's previews come from the same compiler.
+      F13 Mirror and erase -- status: ready.
+        Why: a mirrored sprite is a second sprite today, and a sprite cannot turn pixels off because . is transparent, so the chomp needed two whole ghost sprites to wiggle one row of skirt.
+        Shape: a placement may give "mirror": "x" or "y", and a sprite's K paints off over earlier placements, so a frame can patch a few pixels instead of redrawing the sprite.
+        Cost: none.
+        Accept: a mirrored placement equals the sprite drawn mirrored, and K over an earlier placement leaves those pixels off.
     evidence_basis: |
       - The 0x04 speed field is a per-frame hold in milliseconds (speed sweep 64 / 512 / 2000 on the reference panel, 2026-07-13).
       - The 0x04 payload ceiling is 30,720 B including the 27-byte header: 79 frames at 64x16 were accepted with 238/238 success acks, and 80 frames were rejected on packet 0 with status 0x04 DATA_LENGTH_ERROR (2026-08-15).
       - Temporal (FRC) colour only exists on the panel; a .gif preview shows the binarized subframes, and a .png preview their ideal blend, which the panel only approximates.
       - Per-chunk acks average 153 ms over the first 30 chunks of an upload, then 215 to 245 ms for the rest, with single acks still as fast as ~118 ms throughout (238 chunks in 51.1 s, 215 ms mean, 2026-10-29).
+      - Cursor hands an MCP tool's image content to the model (2026-10-30): an agent judged its drawings from render's picture instead of the text grid, and redrew a moon that read as the letter C.
+      - A four-frame Pac-Man chomp written as five 10x10 sprites and their placements compiled to the same packets, plan_id 54b0da78a1eebd99, as the same animation hand-written as 2,560 characters of draw (2026-10-30).
     open_questions: |
       - Does the same 30,720-byte ceiling govern 0x02 banners? An independent 64x16 CoolLEDX controller publicly reports 0x02 uploads of 30,695 B succeeding, which fits.
       - What push rate does the panel tolerate for 0x01 before it drops or queues packets?
       - Does a 0x04 upload show the same progress indicator as 0x02, and does it survive power loss the way 0x02 content does?
       - How many chunks can the panel buffer in flight before it rejects one with 0x05?
+      - Which layer spec should own the coolled-verbs MCP surface? None covers it today; SignControlService is the nearest.
+      - How long does Cursor let one MCP tool call run? accept waits 25 s before leaving an upload to the background, which is a guess, not a measurement.
     provenance: |
       - F1 and F2 came out of the side-scroll review (2026-09-05). F3 was deferred until the scroll work merged (PR #2). F4 is motivated by multi-page controllers that re-upload per page, such as RavestickBoard (github.com/du13500/RavestickBoard-for-CoolLED1248). F5 came out of the upload-time review (2026-10-29).
+      - F6 to F13 came out of the agent-drawing session (2026-10-30): drawing a Pac-Man chomp and a night skyline through coolled-verbs showed which arithmetic an agent still does by hand, and what a sprite cannot yet say.
   }
 }
