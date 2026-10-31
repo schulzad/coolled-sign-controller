@@ -80,6 +80,10 @@ An AI agent drew these through the [MCP server](#mcp-server). Each is a scene: s
 
 `uv run python scripts/render_scenes.py` rebuilds these renders and a frame bundle for each scene, and `coolled send examples/generated/scenes/night-skyline.bundle.json` plays one on the panel. To look at a drawing before sending it without the MCP server, `uv run python scripts/picture.py SOURCE OUT.png` renders a scene file or a text drawing to the same picture `render` returns. [`pacman-chomp.txt`](examples/scenes/pacman-chomp.txt) is the chomp as it was first drawn, by hand in `draw`'s format: 2,560 characters that compile to the same frames as its scene.
 
+**Bigger than the panel.** [`examples/canvas/ringed-planet/`](examples/canvas/ringed-planet) is a 384×384 piece an agent painted coarse to fine in 25 looks: a ringed gas giant rising over a small moon's horizon, with a lander and one astronaut. The MCP server can't compose past the panel's size yet, so the agent worked through throwaway scripts, kept beside the scene: brushes that bake plain rows from one shared model of the planet, rings and sun, and a workspace for looking at one region at a time, tracing a pixel to the sprite that painted it, and diffing versions. The folder also holds every look, every saved version, and the agent's plan, log and account. [`specs/SceneCanvas.smdl`](specs/SceneCanvas.smdl) is the design it tests.
+
+<img src="examples/canvas/ringed-planet/final.png" width="512" alt="A ringed gas giant with yellow, red and white bands and a blue polar cap rising over the grey horizon of a small moon, its rings sweeping across the sky, a small blue-white moon at top left, and a tiny lander and astronaut on the cratered ground">
+
 ### Dithering: faking colours the panel doesn't have
 
 The panel is 1 bit per channel — 8 states total (black, red, green, blue, cyan, magenta, yellow, white). A full-spectrum bar has far more colours than that, so the codec either snaps each pixel to the nearest of the 8 (`--dither none`) or trades spatial detail for apparent colour with ordered or Floyd–Steinberg dithering:

@@ -10,6 +10,7 @@
     "protocol/transport -> move bytes, honor pacing, gate execute",
     "animation       -> render scenes to transport-neutral frames",
     "sdk/api         -> orchestrate panels, execute gate, tracing",
+    "canvas          -> scenes at their own size, looks for painters, fitting to a panel (design-only)",
     "planning        -> feature board: designed-but-unbuilt cards (design-only)"
   ],
   "modules": [
@@ -75,6 +76,15 @@
       "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4), F5 pipelined chunk upload (proposed; needs a hardware ack-window test)",
       "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService", "DeviceProfileLedger", "GuardedTransport"],
       "summary": "Feature backlog: each card names its entry point, the Functions it needs, its owning layer module, its cost against the measured 30,720-byte / 79-frame 0x04 budget, and its acceptance criteria. Governed by FeatureBoardKernel; nothing here touches the radio."
+    },
+    {
+      "module": "SceneCanvas",
+      "file": "SceneCanvas.smdl",
+      "layer": "canvas",
+      "source": "none yet -- design-only; compose and fit would join PixelFramePipeline, and the workspace (looks, inspection, checked edits) the coolled-verbs server",
+      "status": "design-only (forge stage: designed); its first drawing ran 2026-10-31 (a 384x384 ringed planet, 25 looks) and is kept with its workspace, brushes and records in examples/canvas/ringed-planet; no product code yet",
+      "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService"],
+      "summary": "A canvas that is not the panel, and the workspace a painter sees it through: a scene composes at its own size; the painter looks at the whole scaled to one picture or at one region legibly, traces any pixel to the sprite cell that put it there, and changes the file through revision-checked edits with pixel diffs; fitting alone turns a canvas into a still, a banner or a pan for one panel. Pixels stay literal sprite rows; shapes, rules and patterns are brushes that propose rows from outside the file. Governed by CanvasKernel, and its first drawing by FirstDrawingKernel."
     }
   ],
   "data_flow": [

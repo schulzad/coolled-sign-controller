@@ -1,0 +1,78 @@
+First drawing: log, one entry per look. Views come from workspace.py; scales are screen pixels per canvas pixel.
+
+look 1 · overview · whole 384x384 at 2 px
+showed: it reads as a ringed planet at once: polar hood, warm bands, the ring sweeping up to the left and off the right edge, the horizon's curve. Single pixels do not read at 2 px: stars show as dots, but dither patterns and the ring's fine gaps do not. Below the front ring the planet turns into a dark, muddy wedge with a stray yellow sliver; the ground is an even, bright grey noise that competes with the planet.
+traced: (160, 268) and (205, 262) are ring_shadow K over the planet's white zone, so the wedge is the rings' shadow, broad because the sun sits about 30 degrees above the ring plane. (362, 204) is ring_back K: the planet's shadow on the back ring, as meant.
+changes:
+- lowered the sun to about 11 degrees above the ring plane and swung it further left, so the ring shadow narrows to a band under the ring and the southern bands show again (prompted by the trace)
+- darkened the ground and gave it larger patches, so it sits under the planet instead of competing with it (prompted by the overview)
+look 2 · overview · 2 px
+showed: the ring shadow is now a thin band hugging the ring, and the southern bands (magenta, yellow, orange) show between the ring and the horizon. The terminator stands nearly upright on the right. With the sun further round to the left, the planet's shadow now swallows most of the back ring right of the planet; physically right, but it may read as a missing ring rather than a shadow. The ground is darker but still an even grey carpet. Composition holds: the planet dominates, the ring's left end rests near the left edge, open sky at top left for the small moon, open ground at lower left for the lander and astronaut.
+changes: none yet; the coarse layout stands, and the next looks are tiles at region scale (3x3 tiles of 128, A1 to C3).
+look 3 · region B2 (x 128-255, y 128-255) · 6 px
+look 4 · region C2 (x 256-383, y 128-255) · 6 px
+showed: at 6 px every single pixel reads, and so does every dither pattern: legible_px is somewhere between 2 and 6 for me. The bands read well; the solid red belt is heavy. The C ring is see-through over the planet, as meant. Black specks run along the front ring's lower edge in B2, and on the left over the sky. In C2 the terminator is a clean dithered edge, but the night side is a black slab with no limb; the planet's shadow blanks the back ring right of the planet, leaving one stray sliver floating at (348-362, 190-195); and the planet's shadow lays long black streaks along the front ring's right end.
+traced: (214, 258) shows the planet's red through the front ring and (120, 228) shows bare sky, so the specks are ring gaps, not paint: where the ellipse bottoms out the rings are foreshortened to a fifth, the 2-pixel Encke gap becomes half a pixel and aliases into specks, and the Cassini division breaks up. (226, 252) also shows ring_shadow K hidden under the front ring: buried paint, harmless.
+changes:
+- dropped the Encke gap and widened the Cassini division, so the gaps that remain draw as lines (prompted by the trace)
+- swung the sun round to the front (left, slightly up, mostly toward us), so the planet is a fuller gibbous, its shadow falls behind it and cuts the back ring just past the night limb, and the streaks and the floating sliver go (prompted by C2)
+look 5 · overview · 2 px
+look 6 · region C2 · 6 px
+showed: a fuller gibbous and the front-ring streaks are gone, but the back ring right of the planet is still dark. Working it out instead of guessing: that stretch of ring sits about 100 px behind the planet, so any sun from the left puts it inside the planet's shadow. The gaps now draw as lines.
+changes:
+- moved the sun to the right, low and in front, so the back ring right of the planet is lit and the planet's shadow falls on the big left arc instead, the classic shadow-on-the-rings look; kept it near the ring plane so the ring shadow on the planet stays a thin band. The plan said upper left; this is the one deliberate change of plan so far (prompted by C2 and the geometry)
+- flipped the crater brush to match: rims and inner walls lit from the right, shadows to the left
+- darkened the ground again (prompted by look 5: still a bright carpet)
+look 7 · overview · 2 px
+look 8 · region A2 (x 0-127, y 128-255) · 6 px
+showed: the back ring now runs lit to the right edge above the front ring. The planet's shadow cuts the left arc in a sharp diagonal through every band, from (52, 148) to the planet, so the left arc reads as sweeping in and going dark before the limb. The ring's left end is crisp, with the Cassini division as a clean black line and the F ring as a sparse dotted rim. The night side is now a dithered dark limb on the left. The ground is darker blue-grey texture with no features.
+changes: none in these tiles; the coarse layer is settled. Next: row 3 at region scale, where most of the hand-painting goes.
+look 9 · region A3 (x 0-127, y 256-383) · 6 px
+look 10 · region B3 (x 128-255, y 256-383) · 6 px
+showed: the ground is a regular Bayer dot screen, mechanical, nothing like regolith; the overview hid that completely. The horizon crest is a clean stepped line. In B3 the planet's foot meets the horizon cleanly, with the ring shadow as a dark gap between ring and planet.
+changes:
+- re-baked the ground, still a block-in, with random grain, brighter near the horizon where the light grazes, clumped near the viewer (prompted by A3)
+- baked craters (big, mid, small, tiny), a lamp pool and two lit spheres with the brushes, and painted by hand: the lander (windows, beacon, gold descent stage, splayed legs), the astronaut (visor, backpack, an arm raised toward the planet), three rock shapes lit from the right with shadows to the left, two distant crater rims breaking the horizon, twelve footprints, the moonlet's shadow on the polar hood
+- placed all of it by hand: lander and astronaut lower left, the big crater lower right, small craters thinning toward the horizon, the small moon in the empty sky at top left, the moonlet against the blue hood where white shows
+diff 03 to 04: 13,618 pixels changed, in exactly three boxes (ground, small moon, moonlet), so nothing touched the planet or rings by accident.
+look 11 · overview · 2 px
+look 12 · region A3 · 6 px
+showed: the foreground has a story now: lander, figure, crater, horizon bumps. But the near ground's 2x2 clumps are confetti; the lamp pool's random dots read as sparkle, not light; the lander's yellow windows vanish into its gold foil; the footprints are lost in the grain.
+changes:
+- calmed the near ground, sparser and darker toward the viewer (prompted by look 11)
+- rebuilt the lamp pool as an ordered dither, and made the lander's windows cyan (prompted by look 12)
+look 13 · overview · 2 px
+look 14 · region x 8-119, y 312-351 · 7 px
+showed: the lander reads; the pool is too tall, so the lander's lower half sits in a yellow cloud and its legs disappear. The astronaut reads at 7 px, visor and raised arm included. The footprints are half there.
+changes:
+- flattened the pool to 64x9 and set it at the lander's feet (prompted by look 14)
+- cleared a dark scuffed path along the walk so the prints stand out (prompted by look 14)
+look 15 · region x 8-119, y 312-351 · 7 px
+look 16 · region C3 (x 256-383, y 256-383) · 6 px
+showed: the lander now stands clear above its pool. I still could not make out the footprints in look 15. In C3 the big crater reads as lit from the right, but it is the brightest thing in the foreground and pulls the eye from the figures; the far rim cuts the planet's foot as meant; the Cassini division breaks into dashes where the ring runs nearly flat.
+traced: (57, 342), (77, 345) and (93, 346) all show print W over trail_clear K: every footprint is there. My eye missed them in a busy 7 px look; the trace did not. A detection miss, not a painting one.
+changes:
+- dimmed the crater brush (lit wall at most 60%, only the sunward outer rim solid) and re-baked the four craters, which nothing had hand-edited yet (prompted by look 16)
+look 17 · region x 48-111, y 330-349 · 10 px
+look 18 · region x 150-349, y 196-285 · 4 px
+showed: at 10 px the footprints read as a faint dotted trail across the scuffed path; subtle, but there for a close look. At 4 px single pixels and dither patterns still read, so legible_px is above 2 and at most 4. The planet's face is flat: clean bands, no weather.
+changes:
+- painted pale streaks inside the red belt and wisps hanging off its southern edge, a storm with a red eye and two white pearls in the dark southern belt, all placed under the ring shadow and the front ring in draw order so the rings still pass over them (prompted by look 18)
+diff 07 to 08: only 108 pixels changed, which was the first sign something was off.
+look 19 · region x 190-339, y 176-255 · 5 px
+showed: the streaks and wisps work. The storm and pearls missed: placed from my estimate of the belt in look 18, they sit on its pale upper edge, about 6 px too high, where white disappears and only the storm's red eye shows. Reading the rulers here, the belt's centre runs from about (214, 236) to (298, 250).
+changes:
+- moved the storm down 5 px and the pearls 7 px and 3 px onto the belt's centre line (prompted by the rulers in look 19)
+look 20 · region x 190-319, y 214-263 · 5 px
+look 21 · region A1 (x 0-127, y 0-127) · 6 px
+showed: storm and pearls now sit in the dark belt as white spots. The small moon is lit like the planet, with a thin night limb on the left, but its face is blank.
+changes:
+- painted a few dark spots on the small moon (prompted by look 21)
+look 22 · overview · 2 px (stepping back)
+showed: the whole holds together: one light everywhere (lit sides right, shadows left, the moonlet's shadow left of it), the dimmer craters no longer pull the eye from the figures, no seams between tiles needed mending because nothing hand-painted straddles one. The near ground's 2x2 pebbles are still a little regular.
+hidden: 24 of 281 placements showed nowhere, all of them stars buried behind the opaque rings.
+changes:
+- cleared the 24 buried stars and every block_in flag; diff 10 to 11: 0 pixels changed, as clearing buried paint should
+look 23 · final picture, 2x · look 24 · region x 24-123, y 306-349 · 7 px · look 25 · region x 150-329, y 96-195 · 4 px
+showed: the final piece, whole and in two details: lander, pool, trail and figure; the moonlet's transit and shadow on the polar hood.
+---end---
