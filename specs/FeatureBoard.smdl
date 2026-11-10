@@ -100,17 +100,19 @@ Module("FeatureBoard") {
       }
 
       Directive("/scene_shapes") {
-        description: "Card F10. Shapes as scene placements: a placement may be a pie, circle, rectangle, line or text instead of a sprite, drawn in the panel's own 1-bit colors, so a Pac-Man is a pie of size 10 with a 70-degree mouth rather than ten rows of letters."
+        description: "Card F10. Shapes and lettering as brushes: a pie, circle, rectangle, line or line of text is drawn once in the panel's own 1-bit colors and reaches a scene as an ordinary sprite's rows, through SceneCanvas's bake_brush, so a Pac-Man is a pie of size 10 with a 70-degree mouth rather than ten rows of letters, and a greeting is lettered in the panel's own font rather than copied out of a text grid. The scene file holds only the rows."
         metaphor: "Reaching for the stencil drawer for circles and arrows, and drawing freehand only the odd tool."
         parameters: {
           shape: { type: "enum", options: ["pie", "circle", "rect", "line", "text"], description: "What to draw.", required: true },
-          size: { type: "array[int]", description: "Width and height; a pie or circle takes one diameter.", required: true },
+          size: { type: "array[int]", description: "Width and height; a pie or circle takes one diameter; text takes none, since its rows are as big as its lettering.", required: false },
           color: { type: "string", description: "A legend letter, a color name or #rrggbb.", required: false, default: "white" },
-          mouth: { type: "int", description: "pie only: the opening in degrees, facing right.", required: false, default: 0 }
+          mouth: { type: "int", description: "pie only: the opening in degrees, facing right.", required: false, default: 0 },
+          text: { type: "string", description: "text only: the words to letter.", required: false },
+          font_size: { type: "int", description: "text only: the size of Pillow's built-in font. 10 letters it as still text and render's host-side scroll do; 16, the panel's height, as the panel's own scroll does.", required: false, default: 10 }
         }
         actions: { draw: "rasterize_shape" }
         kernel: "FeatureBoardKernel"
-        tags: ["card:F10", "status:proposed", "scene"]
+        tags: ["card:F10", "status:proposed", "scene", "brush"]
       }
 
       Directive("/scene_scroll") {
@@ -147,6 +149,30 @@ Module("FeatureBoard") {
         actions: { place: "scene_layout", detect: "color_patches" }
         kernel: "FeatureBoardKernel"
         tags: ["card:F14", "status:proposed", "mcp:coolled-verbs", "scene"]
+      }
+
+      Directive("/frame_selection") {
+        description: "Card F15. Choose the frames a result shows: frame takes a list (\"frame\": \"0,8,16,24,32\") as well as N, N-M and all, on plan as well as render, and with no frame named both spread their frames evenly across the loop instead of showing its first eight, each frame in the picture labeled with its index."
+        metaphor: "Photographing one tool from each section of the pegboard, instead of the first eight hooks by the door."
+        parameters: {
+          frame: { type: "string", description: "N, N-M, all, or a comma-separated list of N and N-M; omit for frames spread across the loop.", required: false }
+        }
+        actions: { pick: "select_frames", spread: "sample_frames" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F15", "status:ready", "mcp:coolled-verbs"]
+      }
+
+      Directive("/scroll_text_parity") {
+        description: "Card F16. One lettering for scrolling text: render text with scroll shows the banner plan text with scroll sends, a render_wide_text banner for the panel's own scroll, instead of a host-side flipbook lettered in a smaller size of the same font."
+        metaphor: "Holding the actual sign up to the wall before hanging it, not a smaller sketch of it."
+        parameters: {
+          value: { type: "string", description: "The message, with scroll true.", required: true },
+          foreground: { type: "string", description: "A color name or #rrggbb.", required: false, default: "white" },
+          background: { type: "string", description: "A color name or #rrggbb.", required: false, default: "black" }
+        }
+        actions: { preview: "preview_scroll_text" }
+        kernel: "FeatureBoardKernel"
+        tags: ["card:F16", "status:ready", "mcp:coolled-verbs"]
       }
     }
 
@@ -453,21 +479,22 @@ Module("FeatureBoard") {
       }
 
       Function("rasterize_shape") {
-        description: "Draw a shape placement as a sprite: a pie, circle, rectangle, line or text in its color, without antialiasing, each channel cut at the codec's 127, and transparent everywhere else, so it then stamps exactly like a drawn sprite."
+        description: "Draw a shape as a sprite's rows: a pie, circle, rectangle or line in its color without antialiasing, or a line of text in Pillow's built-in font at font_size, drawn as render_static_text draws still text; then cut each channel at the codec's 127 and write the result in the legend, '.' everywhere else, so what a scene holds is rows like any drawn sprite's and never depends on the rasterizer or the font again."
         metaphor: "Tracing round the stencil, then hanging the tracing like any other outline."
         input_parameters: {
-          shape: { type: "object", description: "The shape placement: shape, size, color, and mouth or text.", required: true }
+          shape: { type: "object", description: "The shape: shape and color, with size and mouth, or text and font_size.", required: true }
         }
         output_format: {
-          sprite: "Image — an RGBA sprite, transparent outside the shape."
+          rows: "list[str] the sprite's rows in the legend, '.' outside the shape, trimmed to what it lit"
         }
         implementation: |
           def rasterize_shape(shape):
-              canvas = a transparent image of the shape's size
-              draw the pie, circle, rectangle, line or text in its color with antialiasing off
+              canvas = a transparent image of the shape's size, or of the lettering's box for text
+              draw the pie, circle, rectangle or line in its color with antialiasing off,
+                  or the text as render_static_text draws it, at font_size
               cut every channel at 127, as the codec does
-              return canvas
-        tags: ["pure"]
+              return the canvas as rows in the legend, trimmed to what it lit
+        tags: ["pure", "brush"]
       }
 
       Function("scroll_scene") {
@@ -550,6 +577,63 @@ Module("FeatureBoard") {
               return the listed patches largest first, then the speckle counts
         tags: ["pure", "mcp"]
       }
+
+      Function("select_frames") {
+        description: "The frames a render or plan result shows: the ones frame names, as N, N-M, all, or a comma-separated list of those, in the order given and at most eight, or sample_frames's spread when frame names none."
+        metaphor: "Reading the hook numbers off the order slip."
+        input_parameters: {
+          frame: { type: "string", description: "N, N-M, all, or a comma-separated list of N and N-M; empty for the spread.", required: false, default: "" },
+          frame_count: { type: "int", description: "Frames in the bundle.", required: true },
+          limit: { type: "int", description: "The most frames one result returns.", required: false, default: 8 }
+        }
+        output_format: {
+          frames: "list[int] the frame indexes, in the order asked",
+          raises: "ValueError — when an index is outside the bundle or more than limit frames are named, saying which"
+        }
+        implementation: |
+          def select_frames(frame, frame_count, limit):
+              if frame is empty: return sample_frames(frame_count, limit)
+              indexes = every comma-separated part read as N, N-M or all and expanded, in the order given
+              refuse an index outside 0 to frame_count - 1, or more than limit of them, saying which
+              return indexes
+        tags: ["pure", "mcp"]
+      }
+
+      Function("sample_frames") {
+        description: "Frames spread evenly across a loop, the first always among them, so a result that names no frame shows every part of a long loop rather than its opening: eight of a 40-frame loop are 0, 5, 10, 15, 20, 25, 30 and 35."
+        metaphor: "One photo from each section of the wall."
+        input_parameters: {
+          frame_count: { type: "int", description: "Frames in the bundle.", required: true },
+          limit: { type: "int", description: "How many to show.", required: false, default: 8 }
+        }
+        output_format: {
+          frames: "list[int] the indexes, ascending"
+        }
+        implementation: |
+          def sample_frames(frame_count, limit):
+              if frame_count <= limit: return every index, as today
+              return i * frame_count // limit for each i below limit
+        tags: ["pure", "mcp"]
+      }
+
+      Function("preview_scroll_text") {
+        description: "What render shows for text with scroll: the banner plan sends, built by the same render_wide_text call from the same text and colors, as one picture at the panel's height and the banner's width with its text grid, so the lettering render previews is the lettering the panel scrolls."
+        metaphor: "Holding the actual sign up to the wall."
+        input_parameters: {
+          text: { type: "string", description: "The message.", required: true },
+          height: { type: "int", description: "The panel's height.", required: true },
+          foreground: { type: "string", description: "A color name or #rrggbb.", required: false, default: "white" },
+          background: { type: "string", description: "A color name or #rrggbb.", required: false, default: "black" }
+        }
+        output_format: {
+          banner: "Image — the banner plan text with scroll sends, pixel for pixel"
+        }
+        implementation: |
+          def preview_scroll_text(text, height, foreground, background):
+              banner = the banner render_wide_text draws from text, height and the colors, exactly as plan builds it
+              return banner, with its text grid
+        tags: ["pure", "mcp"]
+      }
     }
 
     Sprout {
@@ -627,12 +711,12 @@ Module("FeatureBoard") {
       }
 
       Chain("SceneShapesFlow") {
-        description: "A shape becomes a sprite, then stamps like one."
+        description: "A shape or a line of text becomes a sprite's rows once, and from then on the scene holds only the rows."
         metaphor: "Stencil, then hang."
         links: [
-          { source: "/scene_shapes", target: "rasterize_shape", description: "Geometry to 1-bit pixels, transparent outside." }
+          { source: "/scene_shapes", target: "rasterize_shape", description: "Geometry or lettering to rows in the legend, '.' outside." }
         ]
-        tags: ["pipe"]
+        tags: ["pipe", "brush"]
       }
 
       Chain("SceneScrollFlow") {
@@ -662,13 +746,32 @@ Module("FeatureBoard") {
         ]
         tags: ["pipe", "mcp"]
       }
+
+      Chain("FrameSelectionFlow") {
+        description: "A result names its frames, or spreads them across the loop, before its picture and grids are built."
+        metaphor: "Choose the sections, then photograph them."
+        links: [
+          { source: "/frame_selection", target: "select_frames", description: "N, N-M, all or a list, at most eight." },
+          { source: "select_frames", target: "sample_frames", description: "No frame named: eight spread evenly across the loop." }
+        ]
+        tags: ["pipe", "mcp"]
+      }
+
+      Chain("ScrollTextParityFlow") {
+        description: "render builds scrolling text through the banner plan sends, so both verbs show the same lettering."
+        metaphor: "One sign, held up and then hung."
+        links: [
+          { source: "/scroll_text_parity", target: "preview_scroll_text", description: "The banner plan would send, pixel for pixel." }
+        ]
+        tags: ["pipe", "mcp"]
+      }
     }
 
     Kernels {
       Kernel("FeatureBoardKernel") {
         description: "Governs the board: keeps every card design-only until it graduates into its owning layer spec, and holds each card to the device facts it must respect."
         metaphor: "The shop foreman who checks the outline before any tool goes on the wall."
-        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow', 'SceneAnchorFlow', 'LeanResultsFlow', 'SceneShapesFlow', 'SceneScrollFlow', 'SceneFilesFlow', 'LayoutResultsFlow']
+        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow', 'SceneAnchorFlow', 'LeanResultsFlow', 'SceneShapesFlow', 'SceneScrollFlow', 'SceneFilesFlow', 'LayoutResultsFlow', 'FrameSelectionFlow', 'ScrollTextParityFlow']
         invariants: [
           "DESIGN ONLY: No card on this board is built. A card graduates by moving its Functions into its owning layer module's spec when the code lands, and leaves the board.",
           "BUDGET FIRST: Every frame a card adds (gap frames, repeated program pages) counts against the measured 30,720-byte 0x04 payload ceiling, 79 frames at 64x16 after the 27-byte header, and is planned before rendering, never truncated after.",
@@ -677,7 +780,8 @@ Module("FeatureBoard") {
           "ONE GLOBAL SPEED: Per-page or per-gap timing on a 0x04 upload is expressed by repeating frames against one ms-per-frame speed, never by assuming per-frame durations the device does not store.",
           "PANEL-ONLY COLOR: Temporal (FRC) color exists only on the physical panel, so no card validates it from a preview.",
           "STOP-AND-WAIT BY DEFAULT: The transport sends the next chunk only after the previous chunk's ack until a recorded hardware test shows the panel accepts a wider window, and a non-zero ack status inside any window stops the transfer.",
-          "SCENES KEEP THEIR BYTES: A scene that uses none of a card's new fields compiles to exactly the packets it does today, so its plan_id is unchanged and saved scenes never need re-planning when a scene card lands."
+          "SCENES KEEP THEIR BYTES: A scene that uses none of a card's new fields compiles to exactly the packets it does today, so its plan_id is unchanged and saved scenes never need re-planning when a scene card lands.",
+          "RENDER SHOWS THE SEND: For the same noun and arguments, every frame render shows is a frame plan would send, so no card lets an agent preview one thing and send another; F16 restores this for scrolling text."
         ]
         tags: ["governance", "design-only"]
       }
@@ -694,9 +798,11 @@ Module("FeatureBoard") {
       - F2 to CoolLEDXProtocol (the 0x01 encoder) and SignControlService (the live loop), with promotion through DeviceProfileLedger.
       - F4 to SignControlService and PixelFramePipeline, preflighted by CoolLEDXProtocol.
       - F5 to GuardedTransport (the ack window), with the measured window recorded through DeviceProfileLedger.
-      - F8, F10 and F11 to PixelFramePipeline, which owns the scene compositor (opensign.animation.scene).
+      - F8 and F11 to PixelFramePipeline, which owns the scene compositor (opensign.animation.scene).
+      - F10's rasterize_shape to PixelFramePipeline, beside the text renderers in opensign.animation.render, as the brush SceneCanvas's bake_brush calls; the compositor never draws a shape.
       - F9 to the coolled-verbs MCP server (opensign.sdk.verbs_mcp), which no layer spec covers yet; F12 to the coolled CLI and that server.
       - F14 to that server, with scene_layout from PixelFramePipeline's scene compositor and color_patches beside it in opensign.animation.
+      - F15 and F16 to that server: F15 where render and plan pick their frames and stack the picture, F16 where render compiles text.
       - All wire encoding and every BLE write to CoolLEDXProtocol and GuardedTransport; nothing on this board touches the radio.
     cards: |
       F1 Scroll gap -- status: ready.
@@ -737,26 +843,39 @@ Module("FeatureBoard") {
         Cost: none on the panel; far fewer tokens per call.
         Accept: picture=false still returns every grid, text=true restores them beside the picture, and no packet or plan_id changes.
       F10 Scene shapes -- status: proposed.
-        Why: some sprites are geometry. Pac-Man is a pie slice and the moon two overlapping circles, and an agent states geometry more reliably than it draws rows.
-        Shape: a placement may give "shape": pie, circle, rect, line or text, with size, color, and mouth (pie, in degrees) or the text; rasterize_shape draws it without antialiasing and then it stamps like a sprite.
-        Open: whether text belongs here or stays with render_wide_text's font, and how a pie's mouth rounds at 10 px.
-        Cost: none; placement only.
-        Accept: a pie with mouth 0 equals a filled circle of the same size, and shapes and sprites layer in placement order.
+        Why: some sprites are geometry, and some are words. Pac-Man is a pie slice and the moon two overlapping circles, and an agent states geometry more reliably than it draws rows. The birthday loop (2026-11-07) needed three words in the lettering render text draws, so the agent rendered each word and copied its glyph rows out of the text grid into sprites by hand.
+        Shape: a brush, not a placement. rasterize_shape draws a pie, circle, rect or line from size, color and mouth (pie, in degrees), or a line of text from text, color and font_size, and returns rows in the legend; SceneCanvas's bake_brush adds them to a scene as an ordinary sprite and placement. SceneCanvas moved shapes out of the compositor because a placement drawn at compile time breaks LITERAL PIXELS and freezes the rasterizer into every saved scene's bytes; for text the rasterizer includes a font, so a font change would reletter every saved scene that holds words.
+        Font: every text path letters in Pillow's built-in font. Still text and render's host-side scroll draw it at size 10, and render_wide_text draws it at the panel's height, 16, for the panel's own scroll (see F16); font_size defaults to 10, so baked words match still text.
+        Depends: SceneCanvas's bake_brush and plan_edit, so the rows reach a scene file without the agent copying them, and F12, for the file.
+        Open: how a pie's mouth rounds at 10 px.
+        Cost: none; the scene holds only rows.
+        Accept: a pie with mouth 0 bakes the same rows as a filled circle of the same size; text baked at font_size 10 lights exactly the pixels render text lights for the same words and color, trimmed to its box; a scene that holds baked rows compiles to the same packets as the same rows typed by hand.
       F11 Scrolling scenes -- status: proposed.
         Why: a scene is a still or an in-place loop, while an animation can already travel across the panel with coolled animation --scroll.
         Shape: scene scroll with scroll_px and direction composites the scene's frames as one sprite marching across the panel, cycling as it goes, through the same path as create_scrolling_gif_bundle.
         Cost: one pass is (panel width + scene width) / scroll_px frames, thinned to the 79-frame budget like an animation scroll: a full-width scene at 2 px is 64 frames.
         Accept: scrolling a one-frame scene equals coolled animation --scroll of the same image, and the pass is thinned, never truncated.
       F12 Scene files -- status: ready.
-        Why: the art an agent draws should outlive the conversation. examples/scenes holds the first two pieces, and replaying them today means pasting the JSON back into an MCP call or sending their compiled bundles with coolled send.
+        Why: the art an agent draws should outlive the conversation. examples/scenes holds the first two pieces, and replaying them today means pasting the JSON back into an MCP call or sending their compiled bundles with coolled send. Pasting is also where a scene breaks: the birthday loop (2026-11-07), 40 frames in 13,839 characters, went into an MCP call by hand three times, twice as a six-frame preview for render and once whole for plan, and one paste added a character to a sprite row, which only the row-width check caught.
         Shape: coolled scene FILE, with the usual send flags and --preview, and the MCP server's scene noun with a path both read a scene file, which may carry its own frame_ms, through load_scene_file.
         Cost: none.
         Accept: a scene file compiles to the same packets as the same scene passed inline, the same plan_id, and scripts/render_scenes.py's previews come from the same compiler.
       F14 Layout results -- status: proposed.
-        Why: the picture shows what a frame looks like but not where things are to the pixel, and the text grid that does is about 1,000 characters a frame to count through. Once placements move, cycle and wrap, an agent cannot easily work out where an item is in frame 30 at all.
-        Shape: render and plan return each frame's layout beside the picture. A scene's layout is exact, from the compositor (scene_layout); every other noun's is detected (color_patches). With F9, the layout is what stays when the text grid goes.
+        Why: the picture shows what a frame looks like but not where things are to the pixel, and the text grid that does is about 1,000 characters a frame to count through. Once placements move, cycle and wrap, an agent cannot easily work out where an item is in frame 30 at all. In the birthday loop (2026-11-07) both alignment questions were placement facts scene_layout states directly: whether a blank row stays between a word (at y 3, 8 rows tall) and the hearts under it (at y 12), and whether a balloon placed at y -1 loses its top row off the panel. The agent answered both by printing text grids from a local script.
+        Shape: render and plan return each frame's layout beside the picture. A scene's layout is exact, from the compositor (scene_layout); every other noun's is detected (color_patches). With F9, the layout is what stays when the text grid goes, so F9 should ship with F14 or after it: in the birthday loop the grid was how the agent checked every gap.
         Cost: none on the panel; about 50 characters per placement or patch, against about 1,000 per frame of grid.
         Accept: a scene's layout in every frame matches its placements after cycle, motion and wrap, and a placement buried under later paint shows 0; a still of two solid rectangles lists exactly two patches; a dithered gradient lists a handful of patches and a speckle count per color, not thousands of entries.
+      F15 Frame selection -- status: ready.
+        Why: a result shows a loop's first eight frames unless told otherwise, frame takes one index or one range, and plan takes no frame at all. The birthday loop (2026-11-07) is five beats of eight frames, so its first eight were all the first beat; the agent built a second, shorter scene to see one frame of each beat, and turned plan's picture off. SceneCanvas met the same with a pan: the first drawing's tour came back as eight copies of its opening hold, and fit_pan samples across its path, for pans only.
+        Shape: on render and plan, frame takes a comma-separated list of N and N-M as well as N, N-M and all; with no frame named, both show sample_frames's eight frames spread across the loop; the picture labels each frame with its index, as each text frame already carries its own.
+        Cost: none on the panel; at most eight frames per result, as today.
+        Accept: frame "0,8,16,24,32" returns those five frames in that order; a 40-frame loop with no frame named returns frames 0, 5, 10, 15, 20, 25, 30 and 35, which reach every beat of the birthday loop; a loop of eight frames or fewer returns them all, as today; no packet or plan_id changes.
+      F16 Scrolling-text parity -- status: ready.
+        Why: render and plan letter scrolling text differently. render text with scroll draws a host-side flipbook in Pillow's built-in font at size 10, the size still text uses, while plan text with scroll sends a render_wide_text banner in the same font at the panel's height, 16, for the panel's own scroll, so HAPPY previews 8 rows tall with one-pixel stems and is sent 11 rows tall with two-pixel stems (2026-11-10). The two scroll arguments' descriptions say the verbs scroll differently but not that the lettering changes, so an agent that previews with render and then plans sends lettering it never saw. The flipbook dates from render's first version, before plan sent text through the panel's own scroll; coolled text keeps it behind --flipbook.
+        Shape: render text with scroll returns the banner plan sends, built by the same render_wide_text call, as one picture at the panel's height and the banner's width with its text grid, as plan's preview already shows it.
+        Open: whether still text should letter at the panel's height too, so a message keeps its size when it starts scrolling; that changes every still text's packets and plan_id, so it is a decision of its own.
+        Cost: none on the panel; render returns one banner instead of a flipbook of up to 79 frames.
+        Accept: render text with scroll lights exactly the pixels of the banner plan text with scroll sends for the same text and colors; still text renders as before; no packet or plan_id changes.
     evidence_basis: |
       - The 0x04 speed field is a per-frame hold in milliseconds (speed sweep 64 / 512 / 2000 on the reference panel, 2026-07-13).
       - The 0x04 payload ceiling is 30,720 B including the 27-byte header: 79 frames at 64x16 were accepted with 238/238 success acks, and 80 frames were rejected on packet 0 with status 0x04 DATA_LENGTH_ERROR (2026-08-15).
@@ -764,6 +883,7 @@ Module("FeatureBoard") {
       - Per-chunk acks average 153 ms over the first 30 chunks of an upload, then 215 to 245 ms for the rest, with single acks still as fast as ~118 ms throughout (238 chunks in 51.1 s, 215 ms mean, 2026-10-29).
       - Cursor hands an MCP tool's image content to the model (2026-10-30): an agent judged its drawings from render's picture instead of the text grid, and redrew a moon that read as the letter C.
       - A four-frame Pac-Man chomp written as five 10x10 sprites and their placements compiled to the same packets, plan_id 54b0da78a1eebd99, as the same animation hand-written as 2,560 characters of draw (2026-10-30).
+      - Every text path letters in Pillow's built-in font, ImageFont.load_default, which Pillow 12.3 with FreeType serves as a scalable font: still text and render's host-side scroll draw it at size 10, HAPPY 8 rows tall with one-pixel stems, and render_wide_text's banner for the panel's own scroll at size 16, the same word 11 rows tall with two-pixel stems (2026-11-10).
     open_questions: |
       - Does the same 30,720-byte ceiling govern 0x02 banners? An independent 64x16 CoolLEDX controller publicly reports 0x02 uploads of 30,695 B succeeding, which fits.
       - What push rate does the panel tolerate for 0x01 before it drops or queues packets?
@@ -776,5 +896,6 @@ Module("FeatureBoard") {
       - F6 to F13 came out of the agent-drawing session (2026-10-30): drawing a Pac-Man chomp and a night skyline through coolled-verbs showed which arithmetic an agent still does by hand, and what a sprite cannot yet say.
       - F14 came out of reading the Pac-Man chase back through render (2026-11-02): the picture and the text grid both arrived, and neither said where an item was without counting.
       - F6 declared motion, F7 cycles and F13 mirror and erase graduated into PixelFramePipeline when they were built together (2026-11-02). A wrapping item's trip round the panel joins the least common multiple that sets a scene's length, so a wrap loops without a seam unless a stated length cuts it.
+      - F15 and F16 came out of a birthday loop (2026-11-07), a 40-frame scene of five beats sent as plan_id 7f844c0d5c779c04 and kept outside the repo, and the review of that session (2026-11-10), which also added its evidence to F12 and F14 and turned F10's shapes, and its text, into brushes, as SceneCanvas's relation_to_feature_board asked.
   }
 }

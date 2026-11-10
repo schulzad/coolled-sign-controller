@@ -95,12 +95,12 @@ Module("SceneCanvas") {
       }
 
       Directive("/bake") {
-        description: "Run a brush outside the file and propose the rows it leaves as an edit that only adds: a new sprite and one placement, with a note giving the brush's name, version, seed and settings. Shapes, seeded scatter, dither ramps and harvested patterns are brushes; none of them is vocabulary a scene depends on."
+        description: "Run a brush outside the file and propose the rows it leaves as an edit that only adds: a new sprite and one placement, with a note giving the brush's name, version, seed and settings. Shapes, lettering, seeded scatter, dither ramps and harvested patterns are brushes; none of them is vocabulary a scene depends on."
         metaphor: "Pouncing a stencil onto the wall: the chalk dust stays, the stencil goes back in the drawer."
         parameters: {
-          brush: { type: "enum", options: ["shape", "scatter", "dither", "pattern"], description: "Which brush.", required: true },
-          settings: { type: "object", description: "The brush's own settings, such as a pie's size and mouth, or a scatter's density and letters.", required: true },
-          size: { type: "array[int]", description: "[width, height] of the rows the brush paints.", required: true },
+          brush: { type: "enum", options: ["shape", "text", "scatter", "dither", "pattern"], description: "Which brush.", required: true },
+          settings: { type: "object", description: "The brush's own settings, such as a pie's size and mouth, a line of text and its font_size, or a scatter's density and letters.", required: true },
+          size: { type: "array[int]", description: "[width, height] of the rows the brush paints; text takes its lettering's own size.", required: false },
           seed: { type: "int", description: "For a brush that uses chance; recorded in the note.", required: false, default: 0 },
           name: { type: "string", description: "The new sprite's name.", required: true },
           at: { type: "array[int]", description: "Where its one placement goes.", required: true },
@@ -553,9 +553,9 @@ Module("SceneCanvas") {
         description: "Run one brush and keep only what it leaves: rows in the legend, '.' wherever it painted nothing, and a note giving the brush's name, version, seed and settings, which nothing needs to render. A brush may use chance, since only its result is kept, and may change later without touching any scene it has painted. Its rows reach a scene only through plan_edit, as an edit that adds one sprite and one placement and nothing else. Scatter is the exception the first drawing found: its stars were many placements of tiny sprites, with one note at the scene's level instead of one on each."
         metaphor: "Pouncing chalk through the stencil, then hanging the stencil back up."
         input_parameters: {
-          brush: { type: "enum", options: ["shape", "scatter", "dither", "pattern"], description: "Which brush.", required: true },
+          brush: { type: "enum", options: ["shape", "text", "scatter", "dither", "pattern"], description: "Which brush.", required: true },
           settings: { type: "object", description: "The brush's settings.", required: true },
-          size: { type: "array[int]", description: "[width, height] of the rows to paint.", required: true },
+          size: { type: "array[int]", description: "[width, height] of the rows to paint; text takes its lettering's own size.", required: false },
           seed: { type: "int", description: "For a brush that uses chance.", required: false, default: 0 }
         }
         output_format: {
@@ -565,6 +565,7 @@ Module("SceneCanvas") {
         implementation: |
           def bake_brush(brush, settings, size, seed):
               shape: a pie, circle, rectangle or line in one letter, without antialiasing, as card F10 describes them
+              text: a line of words in one letter, in Pillow's built-in font at the settings' font_size, 10 by default as still text is, drawn as render_static_text draws it and cut at 127, as card F10 describes it
               scatter: single pixels at places drawn from seed, at the settings' density and letters, for stars, snow or sand
               dither: an ordered-dither ramp between two legend colors across size, for a dawn sky or deep water
               pattern: the rows of a sprite from another scene file, copied exactly, never referenced
@@ -928,7 +929,7 @@ Module("SceneCanvas") {
       A square canvas reaches this panel only as a pan or as chosen windows, so it is painted for itself first and fitted after.
     brushes: |
       A generator may propose pixels, but once accepted they belong to the artwork, not the generator. A brush proposes rows, plan_edit shows them in place with their pixel diff, and apply_edit adds them as a new sprite and placement, only ever adding. The placement's note keeps the brush's name, version, seed and settings, which nothing needs to render but which tell the next painter where a shape came from.
-      The first brushes: shapes (card F10's pie, circle, rectangle and line), seeded scatter (stars, snow, sand), ordered-dither ramps between two legend colors (a dawn sky, deep water), and exact patterns harvested from finished scenes, which arrive as copies. Pattern synthesis such as wave function collapse can come later, as one more texture brush invoked on purpose: it reproduces local neighborhoods, not the intent of a composition, which is the staggered-windows objection again even when the rule is learned from an example. A split grammar for buildings would be another, laying down a starting texture rather than the result.
+      The first brushes: shapes (card F10's pie, circle, rectangle and line), lettering (card F10's text, in the panel's own font at the size still text uses, so a greeting is baked rows rather than a font the scene depends on), seeded scatter (stars, snow, sand), ordered-dither ramps between two legend colors (a dawn sky, deep water), and exact patterns harvested from finished scenes, which arrive as copies. Pattern synthesis such as wave function collapse can come later, as one more texture brush invoked on purpose: it reproduces local neighborhoods, not the intent of a composition, which is the staggered-windows objection again even when the rule is learned from an example. A split grammar for buildings would be another, laying down a starting texture rather than the result.
       In the first drawing re-baking a block-in where it stood (rebake_layer) was used more than adding, and safe only because nothing had been painted on top yet: an overlay is pinned to canvas pixels, so re-baking the planet with a new tilt would have left the storm floating off its belt. Finding what to regenerate is easy, since the notes name the brush and its settings; keeping the hand work attached is the hard part, and naming the overlays in the diff is the first answer. Baked rows were never edited by hand: the planet's rows are 225 characters wide, so the painter painted small sprites over them, and those overlays were the easiest things in the piece to move.
     recursion: |
       Recursion lives in four places, and only the first ever touches the file:
@@ -1009,8 +1010,9 @@ Module("SceneCanvas") {
       The first reading, the ringed planet: 28 minutes, 89 tool calls (33 text edits, 25 pictures read, 23 shell commands, 6 files written), about 46,000 generated tokens and 24,000 picture tokens, 25 looks, 12 versions, 19 logged changes. Across the gallery, the 64x16 pieces run 6 to 12 sprites, 19 to 57 placements and 283 to 504 characters; the ringed planet is 144 panels of canvas, 34 sprites, 257 placements and 219,896 characters, 1,483 of them typed by hand, and it never lights green.
     relation_to_feature_board: |
       - F9 (lean results) and F12 (scene files) come first: at canvas sizes, text grids and re-sent scenes are the cost. The 512x16 probe scene was 8,063 characters, re-sent with every inline render.
-      - F10 changes shape: as written, a pie is a placement drawn at compile time, which breaks LITERAL PIXELS and would freeze its rasterizer into every saved scene's bytes. Here it is a brush that bakes a sprite.
+      - F10 changes shape: a pie drawn as a placement at compile time breaks LITERAL PIXELS and would freeze its rasterizer into every saved scene's bytes, so here it is a brush that bakes a sprite. The board's F10 says so now (2026-11-10) and adds text, whose rasterizer includes a font: the birthday loop's greeting (2026-11-07) was copied out of render text's grid by hand.
       - F11 becomes a fit: the pan that enters one edge and leaves the other.
+      - F15 spreads a plan's frames across any loop, as fit_pan's plan spreads them across a path, so neither a pan's opening hold nor a loop's first beat stands in for the whole.
       - F6, F7, F8 and F13 keep their shape: they say where, when and which way round, never what.
       - F13's K already works today, as a letter outside the legend recolored black: the first drawing used it for the night side, the ground and every shadow. What the card adds is making it the default.
     evidence_basis: |
