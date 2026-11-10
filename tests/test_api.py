@@ -153,7 +153,7 @@ def test_api_text_native_scroll_and_animation_scroll(tmp_path: Path) -> None:
     assert flipbook.status_code == 200
     assert flipbook.json()["bundle"]["frames"] >= 1
 
-    # /animation scroll composites a travelling sprite -> many more frames than
+    # /animation scroll composites a traveling sprite -> many more frames than
     # the 2-frame source would produce playing in place.
     scrolled = client.post(
         "/animation",

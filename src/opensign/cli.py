@@ -51,7 +51,7 @@ def _load_profile(args: argparse.Namespace) -> DeviceProfile:
     when the default is requested but absent we fall back to the checked-in
     ``device_profile.json`` starter (codec-valid 64x16) with a note, letting
     ``--preview``/``--dry-run`` work off the bat. An explicit ``--profile`` path
-    is always honoured as-is.
+    is always honored as-is.
     """
     path = args.profile
     if path == DEFAULT_PROFILE and not path.exists() and STARTER_PROFILE.exists():
@@ -268,7 +268,7 @@ def _print_image_diagnostics(bundle) -> None:
     """Surface levels, which channels can actually light, and a too-slow temporal loop, on stderr.
 
     Auto-levels picks values the user never sees otherwise, and a low-contrast
-    source often can only render one colour (red/blue below the 1-bit threshold),
+    source often can only render one color (red/blue below the 1-bit threshold),
     which is the usual reason an image looks dim -- name it so the fix (auto/manual
     levels) is obvious.
     """
@@ -616,7 +616,7 @@ def _cmd_image(argv: list[str]) -> None:
         choices=["ordered", "floyd", "none"],
         default="none",
         help=(
-            "Colour reduction to the panel's 8-colour gamut. Default 'none' keeps "
+            "Color reduction to the panel's 8-color gamut. Default 'none' keeps "
             "logos/icons/UI crisp; use 'floyd' or 'ordered' for photographic images."
         ),
     )
@@ -626,8 +626,8 @@ def _cmd_image(argv: list[str]) -> None:
         default=0,
         metavar="N",
         help=(
-            "Temporal colour: render the still as a fast N-subframe loop (N>=2) so "
-            "duty cycle fakes intermediate colours. Relies on the panel's flicker "
+            "Temporal color: render the still as a fast N-subframe loop (N>=2) so "
+            "duty cycle fakes intermediate colors. Relies on the panel's flicker "
             "fusion (~62 Hz); ignores --dither. 0 disables (default). Up to 16 stays "
             "above fusion; more still renders, with a warning. A --preview .png shows "
             "the subframes blended (what the eye should see); a .gif shows them raw."
@@ -640,7 +640,7 @@ def _cmd_image(argv: list[str]) -> None:
         metavar="V",
         help=(
             "Crush channel values <= V to off before dithering. Use this when a "
-            "dark (but not truly black) background washes out to grey, especially "
+            "dark (but not truly black) background washes out to gray, especially "
             "with high --temporal. Try 30-50 for dark UI screenshots."
         ),
     )
@@ -758,16 +758,16 @@ def _cmd_animation(argv: list[str]) -> None:
         "--dither",
         choices=["ordered", "floyd", "none"],
         default="ordered",
-        help="Colour reduction to the panel's 8-colour gamut (default: ordered, best for animation).",
+        help="Color reduction to the panel's 8-color gamut (default: ordered, best for animation).",
     )
     parser.add_argument(
         "--key-color",
         default=None,
         metavar="COLOR",
         help=(
-            "Knock a background colour out to black so a bright, full-scene clip "
-            "does not light the whole 1-bit panel (the subject keeps its colours). "
-            "Pass a colour ('skyblue', '#87CEEB') or 'auto' to sample it from the "
+            "Knock a background color out to black so a bright, full-scene clip "
+            "does not light the whole 1-bit panel (the subject keeps its colors). "
+            "Pass a color ('skyblue', '#87CEEB') or 'auto' to sample it from the "
             "frame border."
         ),
     )

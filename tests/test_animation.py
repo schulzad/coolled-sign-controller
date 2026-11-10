@@ -66,7 +66,7 @@ def test_create_gif_bundle_reads_frames_and_durations(tmp_path: Path) -> None:
     assert (bundle.width, bundle.height) == (64, 16)
     assert bundle.frame_durations_ms == [120, 120, 120, 120]
     assert bundle.metadata["pattern"] == "gif"
-    # authoritative wire-speed key honoured by the codec's _animation_speed()
+    # authoritative wire-speed key honored by the codec's _animation_speed()
     assert bundle.metadata["coolledx_speed"] == 120
 
 
@@ -95,7 +95,7 @@ def test_create_gif_bundle_ordered_dither_binarizes_channels(tmp_path: Path) -> 
     bundle = PixelAnimationStudio(64, 16).create_gif_bundle(path)  # dither defaults to ordered
     channels = set(bundle.frames[0])
     assert channels <= {0, 255}  # every channel is on or off
-    assert 0 in channels and 255 in channels  # flat grey dithers to a mix, not one band
+    assert 0 in channels and 255 in channels  # flat gray dithers to a mix, not one band
 
 
 def test_create_gif_bundle_dither_none_keeps_midtones(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_knockout_color_removes_background_keeps_subject() -> None:
     image.putpixel((4, 4), (255, 0, 0))
     out = knockout_color(image, (135, 206, 235), tolerance=96)
     assert out.getpixel((0, 0)) == (0, 0, 0)  # background knocked out
-    assert out.getpixel((4, 4)) == (255, 0, 0)  # far-off subject colour survives
+    assert out.getpixel((4, 4)) == (255, 0, 0)  # far-off subject color survives
 
 
 def test_detect_background_color_reads_border_not_subject() -> None:
@@ -156,7 +156,7 @@ def test_temporal_dither_frames_binarize_channels() -> None:
 
 
 def test_temporal_dither_time_average_tracks_input() -> None:
-    # A flat mid-grey should average, over the loop, back to ~mid-grey per channel.
+    # A flat mid-gray should average, over the loop, back to ~mid-gray per channel.
     src = Image.new("RGB", (16, 16), (128, 128, 128))
     frames = temporal_dither_frames(src, subframes=4)
     stacked = [list(frame.getdata()) for frame in frames]
@@ -175,7 +175,7 @@ def test_temporal_dither_preserves_extremes() -> None:
 
 
 def test_apply_levels_crushes_dark_and_lifts_bright() -> None:
-    # a dark-grey background pixel and a mid foreground pixel
+    # a dark-gray background pixel and a mid foreground pixel
     src = Image.new("RGB", (2, 1))
     src.putpixel((0, 0), (20, 20, 25))  # button background
     src.putpixel((1, 0), (65, 103, 67))  # muted green text
@@ -190,7 +190,7 @@ def test_apply_levels_identity_is_noop() -> None:
 
 
 def test_temporal_bundle_black_point_reduces_lit_pixels() -> None:
-    src = Image.new("RGB", (64, 16), (22, 22, 26))  # uniform dark-grey background
+    src = Image.new("RGB", (64, 16), (22, 22, 26))  # uniform dark-gray background
     studio = PixelAnimationStudio(64, 16)
     without = studio.create_temporal_image_bundle(src, subframes=12)
     with_crush = studio.create_temporal_image_bundle(src, subframes=12, black_point=40)
@@ -220,12 +220,12 @@ def test_dither_none_preview_shows_what_the_panel_lights(tmp_path: Path) -> None
 
 
 def test_temporal_png_preview_is_the_blend_of_its_subframes(tmp_path: Path) -> None:
-    grey = Image.new("RGB", (64, 16), (128, 128, 128))
+    gray = Image.new("RGB", (64, 16), (128, 128, 128))
     studio = PixelAnimationStudio(64, 16)
-    temporal = studio.create_temporal_image_bundle(grey, subframes=4)
+    temporal = studio.create_temporal_image_bundle(gray, subframes=4)
     assert set(temporal.frames[0]) <= {0, 255}  # each subframe is binary
     blend = Image.open(save_preview(temporal, tmp_path / "blend.png", scale=1))
-    assert set(blend.tobytes()) == {128}  # but they average back to the grey
+    assert set(blend.tobytes()) == {128}  # but they average back to the gray
 
     animation = studio.create_two_frame_bundle()
     first = Image.open(save_preview(animation, tmp_path / "first.png", scale=1))
@@ -249,7 +249,7 @@ def test_temporal_bundle_warns_only_when_the_loop_cannot_fuse() -> None:
     assert temporal_fusion_warning({"pattern": "image"}) is None
 
 
-def test_resample_for_matches_colour_reduction_intent() -> None:
+def test_resample_for_matches_color_reduction_intent() -> None:
     assert PixelAnimationStudio._resample_for("none") == Image.Resampling.NEAREST
     assert PixelAnimationStudio._resample_for("ordered") is None
     assert PixelAnimationStudio._resample_for("floyd") is None
@@ -258,7 +258,7 @@ def test_resample_for_matches_colour_reduction_intent() -> None:
 def test_dither_none_uses_nearest_and_keeps_pixels_crisp() -> None:
     # 2x-oversized pixel art aligned to the panel grid. NEAREST recovers it
     # exactly; the old size-based LANCZOS default would blend the 2x2 blocks into
-    # greys that the codec's >127 threshold scatters (the two-frame.gif glitch).
+    # grays that the codec's >127 threshold scatters (the two-frame.gif glitch).
     studio = PixelAnimationStudio(8, 8)
     src = Image.new("RGB", (16, 16), (0, 0, 0))
     for y in range(8):

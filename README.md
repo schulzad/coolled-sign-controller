@@ -19,7 +19,7 @@ The design rule is **evidence before claims**: there are no hardcoded UUIDs, com
 
 ## Gallery
 
-Each row runs one source through the codec so you can compare it three ways: the **original artwork**, OpenSign's **64×16 render**, and the **same frames on the panel**. The render column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-colour, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. The two **Gengar temporal** rows are the exception: their renders are the blend of many one-bit subframes (see [Temporal colour](#temporal-colour-shades-between-the-8)). A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right show.
+Each row runs one source through the codec so you can compare it three ways: the **original artwork**, OpenSign's **64×16 render**, and the **same frames on the panel**. The render column is produced by the same `coolled … --preview` path that drives the panel, so it's the *exact* 64×16, 7-color, 1-bit-per-channel output the codec ships — just scaled 8× for legibility. The two **Gengar temporal** rows are the exception: their renders are the blend of many one-bit subframes (see [Temporal color](#temporal-color-shades-between-the-8)). A still of a 64×16 board looks busy up close; in motion it reads far better, which is what the panel recordings on the right show.
 
 | Example | Source | OpenSign render →&nbsp;panel | On the panel |
 | :---: | :---: | :---: | :---: |
@@ -50,7 +50,7 @@ coolled image examples/downloaded/gengar.jpg \
   --fit cover --auto-levels --dither none \
   --preview examples/generated/gallery/gengar.none.png
 
-# Temporal colour: one-bit subframes; a .png preview shows them blended
+# Temporal color: one-bit subframes; a .png preview shows them blended
 for n in 16 79; do
   coolled image examples/downloaded/gengar.jpg \
     --fit cover --auto-levels --temporal "$n" \
@@ -82,21 +82,27 @@ An AI agent drew these through the [MCP server](#mcp-server). Each is a scene: s
 
 **Bigger than the panel.** [`examples/canvas/ringed-planet/`](examples/canvas/ringed-planet) is a 384×384 piece an agent painted coarse to fine in 25 looks: a ringed gas giant rising over a small moon's horizon, with a lander and one astronaut. The MCP server can't compose past the panel's size yet, so the agent worked through throwaway scripts, kept beside the scene: brushes that bake plain rows from one shared model of the planet, rings and sun, and a workspace for looking at one region at a time, tracing a pixel to the sprite that painted it, and diffing versions. The folder also holds every look, every saved version, and the agent's plan, log and account. [`specs/SceneCanvas.smdl`](specs/SceneCanvas.smdl) is the design it tests.
 
-<img src="examples/canvas/ringed-planet/final.png" width="512" alt="A ringed gas giant with yellow, red and white bands and a blue polar cap rising over the grey horizon of a small moon, its rings sweeping across the sky, a small blue-white moon at top left, and a tiny lander and astronaut on the cratered ground">
+<img src="examples/canvas/ringed-planet/final.png" width="512" alt="A ringed gas giant with yellow, red and white bands and a blue polar cap rising over the gray horizon of a small moon, its rings sweeping across the sky, a small blue-white moon at top left, and a tiny lander and astronaut on the cratered ground">
 
-### Dithering: faking colours the panel doesn't have
+**A bake-off.** [`examples/bakeoff/`](examples/bakeoff) gave two fresh agents the same one-line brief, "Draw a scene of your choice", on a 384×384 canvas in the panel's eight colors. One painted with [pixel-art-studio](https://github.com/Gamezxz/pixel-art-studio), an existing agent skill for pixel art, and the other with the ringed planet's workspace. Both chose the northern lights over a mountain lake. Shown the two under random labels, the author preferred the workspace's fox, narrowly; it took about 63 minutes to pixel-art-studio's 44. The folder holds both sources, every look, both agents' notes and the numbers.
 
-The panel is 1 bit per channel — 8 states total (black, red, green, blue, cyan, magenta, yellow, white). A full-spectrum bar has far more colours than that, so the codec either snaps each pixel to the nearest of the 8 (`--dither none`) or trades spatial detail for apparent colour with ordered or Floyd–Steinberg dithering:
+| pixel-art-studio | Scene workspace |
+| :---: | :---: |
+| <img src="examples/bakeoff/a-pixel-art-studio/final.png" width="384" alt="A steam train with lit red carriages crossing a stone viaduct over a still lake at night, green aurora rays above blue snowy peaks, the arches glowing with valley mist and mirrored in the water"> | <img src="examples/bakeoff/b-scene-workspace/final.png" width="384" alt="A red fox sitting on a snow-capped boulder at the edge of a mountain lake, looking up at green and magenta northern lights over blue peaks, with a lit cabin across the water and the scene mirrored in the lake"> |
+
+### Dithering: faking colors the panel doesn't have
+
+The panel is 1 bit per channel — 8 states total (black, red, green, blue, cyan, magenta, yellow, white). A full-spectrum bar has far more colors than that, so the codec either snaps each pixel to the nearest of the 8 (`--dither none`) or trades spatial detail for apparent color with ordered or Floyd–Steinberg dithering:
 
 | Source hue sweep | `--dither none` | `--dither ordered` | `--dither floyd` |
 | :---: | :---: | :---: | :---: |
-| <img src="examples/generated/gallery/colorbar.source.png" width="240" alt="Full hue sweep, hundreds of colours"> | <img src="examples/generated/gallery/colorbar.none.png" width="240" alt="Hue sweep snapped to the 8-state gamut as hard bands"> | <img src="examples/generated/gallery/colorbar.ordered.png" width="240" alt="Hue sweep reproduced with ordered dithering"> | <img src="examples/generated/gallery/colorbar.floyd.png" width="240" alt="Hue sweep reproduced with Floyd–Steinberg dithering"> |
+| <img src="examples/generated/gallery/colorbar.source.png" width="240" alt="Full hue sweep, hundreds of colors"> | <img src="examples/generated/gallery/colorbar.none.png" width="240" alt="Hue sweep snapped to the 8-state gamut as hard bands"> | <img src="examples/generated/gallery/colorbar.ordered.png" width="240" alt="Hue sweep reproduced with ordered dithering"> | <img src="examples/generated/gallery/colorbar.floyd.png" width="240" alt="Hue sweep reproduced with Floyd–Steinberg dithering"> |
 
-`none` shows the panel's real gamut as hard bands; `ordered` and `floyd` checkerboard adjacent colours so the eye blends them into the in-between hues. Rule of thumb: **pixel art and logos → `none`** (crisp, already near the gamut); **photos, gradients, and busy animation → `ordered`** (no frame-to-frame shimmer) **or `floyd`** (best detail on a single still).
+`none` shows the panel's real gamut as hard bands; `ordered` and `floyd` checkerboard adjacent colors so the eye blends them into the in-between hues. Rule of thumb: **pixel art and logos → `none`** (crisp, already near the gamut); **photos, gradients, and busy animation → `ordered`** (no frame-to-frame shimmer) **or `floyd`** (best detail on a single still).
 
-### Temporal colour: shades between the 8
+### Temporal color: shades between the 8
 
-`--temporal N` turns a still into a loop of N one-bit subframes that the panel plays by itself, so a pixel's brightness comes from how many subframes light it: lit in 4 of 16 reads as a quarter-bright colour. The Gengar temporal renders show the subframes blended, the image your eye should see, and the recordings show how close the panel gets. Measured against the source fitted to 64×16:
+`--temporal N` turns a still into a loop of N one-bit subframes that the panel plays by itself, so a pixel's brightness comes from how many subframes light it: lit in 4 of 16 reads as a quarter-bright color. The Gengar temporal renders show the subframes blended, the image your eye should see, and the recordings show how close the panel gets. Measured against the source fitted to 64×16:
 
 | Gengar | Average difference from the source, per channel (0–255) | Loop repeats |
 | --- | :---: | :---: |
@@ -201,7 +207,7 @@ Flags worth knowing (run `coolled <command> --help` for the full list):
 
 - **Every render/send command:** `--dry-run`, `-v`/`--verbose` (print the full plan/result JSON), `--preview PATH` (write a `.png`/`.gif` of exactly what the panel would light, instead of sending), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal`/`--flip-vertical`, `--profile PATH`.
 - **Fit (`image`, `animation`):** `--fit contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts the aspect ratio (`stretch` is an alias for `fill`).
-- **Colour (`image`):** `--dither`, `--auto-levels`, `--black-level`, `--white-level`, and `--temporal N` for [temporal colour](#temporal-colour-shades-between-the-8). Above 16 subframes it warns but still sends; a `.png` preview shows the subframes blended, a `.gif` shows them raw.
+- **Color (`image`):** `--dither`, `--auto-levels`, `--black-level`, `--white-level`, and `--temporal N` for [temporal color](#temporal-color-shades-between-the-8). Above 16 subframes it warns but still sends; a `.png` preview shows the subframes blended, a `.gif` shows them raw.
 - **Animation:** `--key-color` / `--key-tolerance` knock a bright background out to black; `--scroll` (with `--scroll-px` / `--direction`) marches the clip across the panel as a sprite.
 - **Caching:** image and animation renders are cached by source contents, panel geometry, and options. `--no-cache` rebuilds and `--cache-dir PATH` moves the cache, which also remembers each panel's upload rate so the progress line's time-left is right from the first chunk.
 
@@ -213,7 +219,7 @@ Flags worth knowing (run `coolled <command> --help` for the full list):
 | --- | --- | --- |
 | `GET` | `/status` | Per-panel state, scheduled jobs, optional diagnostics |
 | `POST` | `/text` | Render + play text (device-native firmware scroll by default; `native=false` for the host flipbook, `scroll=false` for static) |
-| `POST` | `/image` | Fit + play an image (static, or a temporal-colour FRC loop via `temporal`; a loop too slow to blend comes back with `warnings`) |
+| `POST` | `/image` | Fit + play an image (static, or a temporal-color FRC loop via `temporal`; a loop too slow to blend comes back with `warnings`) |
 | `POST` | `/animation` | Compile + play a bounded base64 GIF/APNG (subsampled to the frame buffer); `scroll=true` marches it across the panel |
 | `POST` | `/bundle` (alias `/scene`) | Play a pre-rendered frame-bundle JSON |
 | `POST` | `/brightness` | Set brightness (0–100%) |
@@ -227,8 +233,8 @@ Flags worth knowing (run `coolled <command> --help` for the full list):
 
 | Verb | Nouns | Returns |
 | --- | --- | --- |
-| `describe` | `panel`, `legend`, `upload` | Geometry, colours, capability statuses, and whether `accept` sends; the character each colour renders as; the last upload's progress or result |
-| `render` | `text`, `draw`, `scene`, `pattern`, `image`, `animation`, `bundle` | Each frame as a picture and as text, one character per pixel (`.` off, `#` lit, or a colour letter) |
+| `describe` | `panel`, `legend`, `upload` | Geometry, colors, capability statuses, and whether `accept` sends; the character each color renders as; the last upload's progress or result |
+| `render` | `text`, `draw`, `scene`, `pattern`, `image`, `animation`, `bundle` | Each frame as a picture and as text, one character per pixel (`.` off, `#` lit, or a color letter) |
 | `plan` | the same as `render` | What the panel will show, the packets a send writes, blockers, warnings, and a `plan_id`; never sends |
 | `accept` | none; takes a plan's `plan_id` | Sends the plan, but only on a server started with `--execute` |
 
@@ -246,7 +252,7 @@ render text value=HELLO   (rows 4-11 of 16)
 ................#....#..#####.#####.#####..###..................
 ```
 
-`draw` goes the other way: it reads frames written in that legend, with `#` lighting the `foreground` colour, centres a drawing smaller than the panel, and starts a new frame after each blank line (`frame_ms` sets how long each one shows). Planning this red heart returns *Show the drawing on desk-sign as a still: 5 packets, about 1 s to upload*:
+`draw` goes the other way: it reads frames written in that legend, with `#` lighting the `foreground` color, centers a drawing smaller than the panel, and starts a new frame after each blank line (`frame_ms` sets how long each one shows). Planning this red heart returns *Show the drawing on desk-sign as a still: 5 packets, about 1 s to upload*:
 
 ```
 plan draw value=
@@ -273,7 +279,15 @@ RRRRRRR
 }
 ```
 
-In a sprite `.` is transparent, legend letters light their colour, and any other letter, like `X` here, takes the colour each copy's `colors` gives it. `at` is the sprite's top-left corner and may hang off the panel; later placements draw on top. `items` appear in every frame, and an optional `frames` list adds each frame's own placements on top of them, so a four-frame Pac-Man chomp is five small sprites and a list of positions. It compiles to exactly the packets of the same animation hand-drawn as 2,560 characters of `draw`.
+In a sprite `.` is transparent, `K` paints off over whatever lies beneath it, legend letters light their color, and any other letter, like `X` here, takes the color each copy's `colors` gives it. `at` is the sprite's top-left corner and may hang off the panel, `"mirror": "x"` or `"y"` flips a copy, and later placements draw on top. `items` appear in every frame, and an optional `frames` list adds each frame's own placements on top of them, so a four-frame Pac-Man chomp is five small sprites and a list of positions. It compiles to exactly the packets of the same animation hand-drawn as 2,560 characters of `draw`.
+
+An item can also change from frame to frame. `"sprite"` may list names and `"cycle"` list positions in place of `at`, one per frame and repeating, and `"move": [dx, dy]` steps the item that far each frame; with `"wrap": true` it comes back in at the opposite edge once it leaves. Written this way the chomp needs no `frames` list, and it plans the same packets. With the chomp's sprites, this one item chomps its way across the panel and round again:
+
+```json
+{"sprite": ["pac_open", "pac_shut"], "at": [-10, 3], "move": [2, 0], "wrap": true}
+```
+
+A scene runs for its `"length"`, or else for the least common multiple of its `frames` list, every list an item repeats, and every wrapping item's trip round the panel. Here that is 74 frames: two sprites, and a 37-frame trip for a 10-pixel sprite to clear 64 + 10 columns at 2 a frame. The count is settled before anything is drawn, and a scene that needs more than one upload holds is refused, naming what set the count.
 
 `plan` dry-runs the real delivery. Its `plan_id` is a hash of the exact packet bytes and the panel they go to, and its `next` field holds the matching `accept` call, which needs only that `plan_id`: the server remembers its last 32 plans (and forgets them on restart, after which `accept` also takes the plan's `arguments`). `accept` plans the same content again and refuses if the bytes have changed since (an edited source file, a re-profiled panel), so what goes out is what was reviewed. Scrolling text goes out as the panel's native firmware scroll, as with `coolled text`. An upload still running after 25 seconds carries on in the background, where `describe upload` follows it; a full 79-frame upload takes about a minute on the reference panel.
 
@@ -292,7 +306,7 @@ Install with `pip install -e '.[mcp]'` and register the server with your client.
 
 ## Verified on hardware
 
-Reference panel: **CoolLEDX, 64×16, 7-colour, firmware 6** (BLE MAC `ff:00:00:06:6f:82`).
+Reference panel: **CoolLEDX, 64×16, 7-color, firmware 6** (BLE MAC `ff:00:00:06:6f:82`).
 
 | Capability | Opcode | Status | Notes |
 | --- | --- | :---: | --- |
@@ -300,7 +314,7 @@ Reference panel: **CoolLEDX, 64×16, 7-colour, firmware 6** (BLE MAC `ff:00:00:0
 | Static image | `0x03` | **verified** | 4-chunk image acked per-chunk and displayed (2026-07-13) |
 | Stored animation | `0x04` | **verified** | Stored/looped a clip (2026-07-13); the payload limit is 30 KiB including the header, so 79 frames at 64×16 (80 is rejected, 2026-08-15) |
 | Native text scroll | `0x02` | **verified** | Wide bitmap scrolled by firmware; `coolled text --speed 0..10` (2026-07-14) |
-| Temporal colour (FRC) | via `0x04` | **observed** | Sub-frame loop reads as intermediate tones above the ~62 Hz fusion ceiling; recorded at 16 and 79 subframes in the gallery (2026-10-30) |
+| Temporal color (FRC) | via `0x04` | **observed** | Sub-frame loop reads as intermediate tones above the ~62 Hz fusion ceiling; recorded at 16 and 79 subframes in the gallery (2026-10-30) |
 | Per-chunk ack pacing | notify | **verified** | `acks_received=4/4` on a 4-chunk frame |
 | Power on/off | `0x09`/`0x13`/`0x12` | *experimental* | Reference-driver mapping; not yet isolated on this panel |
 | Scroll mode | `0x06` | **verified** | `mode=left` scrolled the native banner (2026-07-14); `mode=static` after a still keeps it from inheriting that scroll (2026-10-30) |
@@ -332,7 +346,7 @@ ruff check .       # lint (config in pyproject.toml)
 make install-api   # editable install with the API extra
 ```
 
-Tests cover contracts, classification, rendering, frame-bundle round trips, chunking, scheduler behaviour, and render-only orchestration. Hardware tests are intentionally separate — they need a physical panel and reviewed evidence, gathered with the one-shot `scripts/live_*.py` harness.
+Tests cover contracts, classification, rendering, frame-bundle round trips, chunking, scheduler behavior, and render-only orchestration. Hardware tests are intentionally separate — they need a physical panel and reviewed evidence, gathered with the one-shot `scripts/live_*.py` harness.
 
 ## Repository map
 
@@ -342,7 +356,7 @@ src/opensign/
   contracts.py           Shared device / profile / frame-bundle contracts
   hardware_probe/        Discovery, GATT inspection, profile generation
   protocol/              Codec, packet framing, chunking, BLE transport, ProtocolRuntime
-  animation/             Rendering, temporal colour, scenes, frame bundles, previews, render cache
+  animation/             Rendering, temporal color, scenes, frame bundles, previews, render cache
   sdk/                   Registry, API, MCP server, scheduler, orchestration, trace state
 schema/                  JSON Schemas for the stable contracts
 scripts/                 Live hardware harness + one-shot experiments

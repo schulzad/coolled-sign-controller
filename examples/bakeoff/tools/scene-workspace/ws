@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /Users/adamschulz/source/hacking/coolled-sign-controller/.venv/bin/python "$(dirname "$0")/workspace.py" "$@"

@@ -105,10 +105,10 @@ class PixelAnimationStudio:
 
     @staticmethod
     def _resample_for(dither: str) -> Image.Resampling | None:
-        """Pick a resampling filter that matches the colour-reduction intent.
+        """Pick a resampling filter that matches the color-reduction intent.
 
         ``dither="none"`` relies on the codec's hard ``>127`` threshold, so a
-        smoothing filter (LANCZOS/box) is actively harmful: it manufactures grey
+        smoothing filter (LANCZOS/box) is actively harmful: it manufactures gray
         edge pixels that the threshold then snaps unpredictably into scatter.
         NEAREST keeps synthetic art / pixel-perfect sources crisp. Dithered modes
         keep the size-aware default (``None`` -> LANCZOS downscale) since they can
@@ -376,10 +376,10 @@ class PixelAnimationStudio:
         flip_horizontal: bool = False,
         flip_vertical: bool = False,
     ) -> FrameBundle:
-        """Render a *still* as a fast N-frame loop that temporally dithers colour.
+        """Render a *still* as a fast N-frame loop that temporally dithers color.
 
         Turns one image into ``subframes`` binarized frames whose per-pixel duty
-        cycle averages, to the eye, into intermediate colours the panel cannot
+        cycle averages, to the eye, into intermediate colors the panel cannot
         show in a single frame (see :func:`temporal_dither_frames`). Only useful
         for stills: the loop *is* the picture, so it must not carry motion.
 
@@ -449,12 +449,12 @@ class PixelAnimationStudio:
         """Render an animated GIF (or any multi-frame image) into a FrameBundle.
 
         Each frame is composited onto ``background`` (so transparent GIFs do not
-        turn black), fitted to the panel, and dithered to the panel's 8-colour
+        turn black), fitted to the panel, and dithered to the panel's 8-color
         gamut (``dither="ordered"`` by default to avoid temporal shimmer).
 
-        ``key_color`` knocks a background colour out to black before dithering so
+        ``key_color`` knocks a background color out to black before dithering so
         a bright, full-scene clip does not light the whole 1-bit panel: pass a
-        colour (``"skyblue"``, ``"#87CEEB"``, an RGB tuple) or ``"auto"`` to
+        color (``"skyblue"``, ``"#87CEEB"``, an RGB tuple) or ``"auto"`` to
         sample it from the source frame border. ``key_tolerance`` (Euclidean RGB
         distance, 0..441) widens the match.
 
@@ -563,8 +563,8 @@ class PixelAnimationStudio:
         frame budget; pass ``max_frames`` and the flipbook is thinned to fit while
         keeping the same speed (coarser step, longer hold), then loops.
 
-        ``key_color`` makes a background colour transparent before compositing --
-        pass a colour (``"skyblue"``, ``"#87CEEB"``, an RGB tuple) or ``"auto"``
+        ``key_color`` makes a background color transparent before compositing --
+        pass a color (``"skyblue"``, ``"#87CEEB"``, an RGB tuple) or ``"auto"``
         to sample the source border -- so an opaque-background clip still glides
         over black instead of inside a lit rectangle. Sprites that already carry
         transparency composite cleanly without it.

@@ -274,7 +274,7 @@ class OpenSignRuntime:
         """Scroll text with the device's native firmware scroll (opcode 0x02).
 
         Renders one wide banner at the panel height and lets the firmware march it
-        across, matching ``coolled text`` (the default CLI behaviour) rather than
+        across, matching ``coolled text`` (the default CLI behavior) rather than
         building a host-side flipbook. ``speed`` is the 0..10 user scale; ``mode``
         is the scroll-direction byte (2 = left). Degrades to a rendered-only
         result -- it does not raise -- when the profile has no codec that supports
@@ -459,7 +459,7 @@ class OpenSignRuntime:
         ``scroll`` the clip is composited as a sprite that travels across the panel
         (host-side, mirroring ``coolled animation --scroll``) instead of playing in
         place; ``scroll_px`` is the pixels-per-frame step and ``direction`` is
-        ``"left"`` or ``"right"``. ``key_color`` (a colour or ``"auto"``) knocks a
+        ``"left"`` or ``"right"``. ``key_color`` (a color or ``"auto"``) knocks a
         background out so a bright clip does not light the whole 1-bit panel.
         """
         state = self._state(panel_id)

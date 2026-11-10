@@ -27,7 +27,7 @@ sketched — the specs deliberately run a little ahead of the code.
 | `validate_schema` | `contracts.DeviceProfile` construction + `schema/device_profile.schema.json` |
 | `enforce_status_gate` | gate inside `protocol.codec.select_codec` |
 | `capability_matrix` | `capabilities` block in the profile JSON; derive-from-claim-status is **pending** |
-| `derive_display_palette` | collapsed into `animation.render.quantize_to_panel` (fixed 8-colour gamut); explicit `color_mode`→palette derivation is **pending** |
+| `derive_display_palette` | collapsed into `animation.render.quantize_to_panel` (fixed 8-color gamut); explicit `color_mode`→palette derivation is **pending** |
 | `resolve_characteristics` | `hardware_probe.profile.build_device_profile` (`--select-singletons`) |
 
 ## CoolLEDXProtocol → `opensign.protocol.codecs.coolledx`

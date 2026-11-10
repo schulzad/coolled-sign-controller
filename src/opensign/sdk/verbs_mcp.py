@@ -1,7 +1,7 @@
 """
 coolled-verbs: an MCP surface for the panel, as verbs that take nouns.
 
-Modelled on smdl-factory's smdl-verbs spike: a verb called with no noun returns
+Modeled on smdl-factory's smdl-verbs spike: a verb called with no noun returns
 its nouns, failures come back flagged isError with the usage, and every path
 must be absolute. describe reads the panel; render compiles content through the
 same PixelAnimationStudio the CLI and API use and returns each frame as text,
@@ -89,16 +89,17 @@ mcp = FastMCP(
     instructions=(
         "A render and send surface for a CoolLEDX LED panel. Call a verb with no noun "
         "to see its nouns and their arguments. describe panel gives the geometry and "
-        "colours; render compiles text, a drawing, a scene, a pattern, an image, an "
+        "colors; render compiles text, a drawing, a scene, a pattern, an image, an "
         "animation or a frame bundle exactly as the panel would show it, and returns "
         "each frame as a picture and as text, one character per pixel: '.' is off, and "
-        "either '#' marks a lit pixel (mono) or a letter names its colour (describe "
+        "either '#' marks a lit pixel (mono) or a letter names its color (describe "
         "legend). The draw noun reads whole frames written that way; the scene noun "
         "places small sprites written that way at x,y, which is easier to get right "
-        "than whole frames. plan compiles content into the packets a send would write, "
-        "without sending, and returns a plan_id; accept sends a plan_id, and only when "
-        "the server was started with --execute (describe panel says whether it was). "
-        "Every path must be absolute."
+        "than whole frames, and lets a sprite move, cycle and flip from frame to frame "
+        "without writing each frame out. plan compiles content into the packets a send "
+        "would write, without sending, and returns a plan_id; accept sends a plan_id, "
+        "and only when the server was started with --execute (describe panel says "
+        "whether it was). Every path must be absolute."
     ),
 )
 
@@ -114,7 +115,8 @@ PLANS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     "scene": (
         ("scene", "frame_ms"),
-        "sprites placed at x,y, as a still or one frame per entry of frames",
+        "sprites placed at x,y, as a still, one frame per entry of frames, or items that "
+        "move and cycle",
     ),
     "pattern": (("value",), "a built-in pattern: test, checker or two-frame"),
     "image": (("path", "fit", "dither"), "an image fitted and quantized to the panel"),
@@ -143,20 +145,21 @@ PLAN_DEFAULTS: dict[str, Any] = {
 # verb -> noun -> (arguments, what it returns)
 NOUNS: dict[str, dict[str, tuple[str, str]]] = {
     "describe": {
-        "panel": ("", "the panel's id, geometry, colour mode, capability statuses, "
+        "panel": ("", "the panel's id, geometry, color mode, capability statuses, "
                       "and whether accept sends"),
-        "legend": ("", "the character each panel colour renders as, which draw reads back"),
+        "legend": ("", "the character each panel color renders as, which draw reads back"),
         "upload": ("", "the upload accept started last: its progress, then how it ended"),
     },
     "render": {
         "text": ("value [scroll] [foreground] [background] [frame] [style]",
                  "text as the panel shows it, static or as a host-side scroll"),
         "draw": ("value [foreground] [frame_ms] [frame] [style]",
-                 "frames drawn as text, one character per pixel, each centred on the "
+                 "frames drawn as text, one character per pixel, each centered on the "
                  "panel; a blank line starts the next frame"),
         "scene": ("scene [frame_ms] [frame] [style]",
-                  "small sprites drawn as text and placed at x,y, recoloured per copy; "
-                  "a still, or one frame per entry of frames"),
+                  "small sprites drawn as text and placed at x,y, recolored and flipped "
+                  "per copy; a still, one frame per entry of frames, or items that move "
+                  "and cycle"),
         "pattern": ("value [frame] [style]", "a built-in pattern: test, checker or two-frame"),
         "image": ("path [fit] [dither] [style]", "an image fitted and quantized to the panel"),
         "animation": ("path [fit] [dither] [key_color] [scroll] [background] [frame] [style]",
@@ -186,13 +189,13 @@ DITHERS = ("none", "ordered", "floyd")
 # Arguments render and plan share.
 Value = Annotated[str, Field(description="text: the message. pattern: test, checker or two-frame. draw: the frames, one character per pixel (describe legend), at most the panel's size; a blank line starts the next frame.")]
 FilePath = Annotated[str, Field(description="image, animation or bundle: the file, as an absolute path.")]
-Foreground = Annotated[str, Field(description="text: a colour name or #rrggbb. draw: the colour '#' lights.")]
-Background = Annotated[str, Field(description="text or animation: a colour name or #rrggbb.")]
+Foreground = Annotated[str, Field(description="text: a color name or #rrggbb. draw: the color '#' lights.")]
+Background = Annotated[str, Field(description="text or animation: a color name or #rrggbb.")]
 Fit = Annotated[str, Field(description="image or animation: contain, cover or fill (stretch is an alias).")]
 Dither = Annotated[str, Field(description="image or animation: none, ordered or floyd; omit for none on an image and ordered on an animation.")]
-KeyColor = Annotated[str, Field(description="animation only: a colour to knock out to black, or auto to sample it from the frame border.")]
+KeyColor = Annotated[str, Field(description="animation only: a color to knock out to black, or auto to sample it from the frame border.")]
 FrameMs = Annotated[int, Field(description="draw or scene: how long each frame shows, in milliseconds.")]
-Scene = Annotated[dict[str, Any] | None, Field(description='scene only: {"sprites": {"name": ["rows", ...]}, "items": [{"sprite": "name", "at": [x, y], "colors": {"X": "cyan"}}], "frames": [[placements], ...]}. A sprite is a small drawing in the legend where "." is transparent, and any other letter, such as X, takes the colour each placement gives it (a placement may recolour legend letters too). at is the sprite\'s top-left corner on the panel and may hang off its edges; later placements draw on top. items appear in every frame, and each entry of frames adds its own placements on top of them.')]
+Scene = Annotated[dict[str, Any] | None, Field(description='scene only: {"sprites": {"name": ["rows", ...]}, "items": [{"sprite": "name", "at": [x, y], "colors": {"X": "cyan"}}], "frames": [[placements], ...], "length": frames}. A sprite is a small drawing in the legend where "." is transparent, K paints off over whatever lies beneath, and any other letter, such as X, takes the color each placement gives it (a placement may recolor legend letters and K too). at is the sprite\'s top-left corner on the panel and may hang off its edges; "mirror": "x" or "y" flips a placement; later placements draw on top. items appear in every frame, and each entry of frames adds its own placements on top of them. An item can also change from frame to frame: "sprite": ["open", "shut"] shows one name per frame and "cycle": [[x, y], ...] one position per frame in place of at, both repeating, and "move": [dx, dy] steps it that far each frame, coming back in at the opposite edge with "wrap": true. The scene runs for length frames, or else for the least common multiple of its frames list, every list an item repeats and every wrapping item\'s trip round the panel, and is refused past what one upload holds.')]
 
 
 def _noun(verb: str, description: str) -> Any:
@@ -416,11 +419,12 @@ def describe(
         return {
             "noun": noun,
             "color": {char: name for char, name in zip(TEXT_LEGEND.values(), names, strict=True)},
-            "mono": {".": "off", "#": "lit, any colour"},
-            "auto": "mono when a frame lights at most one colour, color otherwise",
+            "mono": {".": "off", "#": "lit, any color"},
+            "auto": "mono when a frame lights at most one color, color otherwise",
             "draw": "reads the same characters, either case; '#' lights its foreground",
-            "scene": "sprites use them too, but '.' is transparent and any other letter "
-                     "takes the colour its placement gives it",
+            "scene": "sprites use them too, but '.' is transparent, 'K' paints off over "
+                     "whatever lies beneath, and any other letter takes the color its "
+                     "placement gives it",
         }
     if noun == "upload":
         if _upload is None:
@@ -454,7 +458,7 @@ def render(
     frame_ms: FrameMs = 200,
     scene: Scene = None,
     frame: Annotated[str, Field(description=f"Which frames: N, N-M or all; omit for the first {MAX_FRAMES_PER_CALL}.")] = "",
-    style: Annotated[str, Field(description="auto, color (a letter per colour) or mono (# for lit).")] = "auto",
+    style: Annotated[str, Field(description="auto, color (a letter per color) or mono (# for lit).")] = "auto",
     picture: Annotated[bool, Field(description="Also return the frames as one picture, scaled up on a pixel grid and stacked top to bottom; turn off for a client that cannot show images.")] = True,
 ) -> dict[str, Any]:
     """CoolLED panel: compile content exactly as the panel would show it and

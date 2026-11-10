@@ -323,7 +323,7 @@ def test_image_warns_when_the_temporal_loop_is_too_slow_but_still_sends(
             return {"encoded": {}, "transfer": {"success": True, "dry_run": True}}
 
     monkeypatch.setattr(cli, "ProtocolRuntime", FakeRuntime)
-    source = tmp_path / "grey.png"
+    source = tmp_path / "gray.png"
     Image.new("RGB", (64, 16), (128, 128, 128)).save(source)
     profile = DeviceProfile(default_device_profile()).save(tmp_path / "profile.json")
     base = [str(source), "--profile", str(profile), "--dry-run", "--cache-dir", str(tmp_path)]

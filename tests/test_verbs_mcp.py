@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ from opensign.protocol.transport import DryRunTransport  # noqa: E402
 from opensign.sdk import verbs_mcp as verbs  # noqa: E402
 
 STARTER = Path(__file__).resolve().parents[1] / "device_profile.json"
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
 @pytest.fixture(autouse=True)
@@ -242,7 +244,7 @@ def test_image_from_text_reads_back_what_text_preview_writes() -> None:
         image_from_text("R?B")
 
 
-def test_render_draw_centres_each_frame_on_the_panel() -> None:
+def test_render_draw_centers_each_frame_on_the_panel() -> None:
     out = render(noun="draw", value="R.\n.R\n\nG.\n.G", frame="all", style="color")
     assert (out["frame_count"], out["duration_ms"]) == (2, 400)
     rows = out["frames"][0]["text"].splitlines()
@@ -274,7 +276,7 @@ def test_render_draw_says_what_is_wrong_with_a_drawing() -> None:
 GHOST = [".XXX.", "XWXWX", "XXXXX", "X.X.X"]
 
 
-def test_render_scene_places_recoloured_sprites() -> None:
+def test_render_scene_places_recolored_sprites() -> None:
     scene = {
         "sprites": {"ghost": GHOST, "bar": ["BBBBB"], "dot": ["W"]},
         "items": [
@@ -312,11 +314,11 @@ def test_render_scene_says_what_is_wrong() -> None:
     assert "sprite 'ghost': row 2 is 4 wide" in problem({"sprites": {"ghost": [".XXX.", "XWXW"]}})
     unknown = problem({"sprites": ghost, "items": [{"sprite": "ghots"}]})
     assert "items[0]: sprite 'ghots' is not one of 'ghost'" in unknown
-    assert "uses X, which needs a colour" in problem({"sprites": ghost, "items": [{"sprite": "ghost"}]})
+    assert "uses X, which needs a color" in problem({"sprites": ghost, "items": [{"sprite": "ghost"}]})
     off_grid = {"sprite": "ghost", "at": [1.5, 0], "colors": {"X": "R"}}
     assert "at must be [x, y]" in problem({"sprites": ghost, "items": [off_grid]})
     plaid = {"sprite": "ghost", "colors": {"X": "plaid"}}
-    assert "not a colour" in problem({"sprites": ghost, "items": [plaid]})
+    assert "not a color" in problem({"sprites": ghost, "items": [plaid]})
     assert "frames[1][0]" in problem({"sprites": ghost, "frames": [[], ["ghost"]]})
 
 
@@ -332,6 +334,22 @@ def test_plan_and_accept_a_scene_by_its_plan_id(
     assert planned["summary"].startswith("Show the scene on")
     sent = asyncio.run(tool("accept")(plan_id=planned["plan_id"]))
     assert sent["state"] == "sent" and radio.written
+
+
+def test_a_chomp_written_with_cycles_plans_the_same_packets(panel: Path) -> None:
+    chomp = json.loads((EXAMPLES / "scenes" / "pacman-chomp.json").read_text(encoding="utf-8"))
+    ghosts = [
+        {"sprite": ["ghost_a", "ghost_b"], "at": [x, 3], "colors": {"X": color}}
+        for x, color in ((0, "cyan"), (12, "magenta"), (24, "red"))
+    ]
+    pac = {"sprite": ["pac_open", "pac_half", "pac_shut", "pac_half"], "at": [37, 3]}
+    cycled = {"sprites": chomp["sprites"], "items": [*chomp["items"], *ghosts, pac]}
+
+    def plan_id(scene: dict) -> str:
+        result = asyncio.run(tool("plan")(noun="scene", scene=scene, frame_ms=150))
+        return result.structuredContent["plan_id"]
+
+    assert plan_id(cycled) == plan_id(chomp)
 
 
 def test_describe_panel_says_whether_accept_sends(monkeypatch: pytest.MonkeyPatch) -> None:

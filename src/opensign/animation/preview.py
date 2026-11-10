@@ -118,7 +118,7 @@ def terminal_preview(image: Image.Image) -> str:
     return "\n".join(lines)
 
 
-# One character per panel colour (1 bit per channel), keyed by (red, green, blue) on/off.
+# One character per panel color (1 bit per channel), keyed by (red, green, blue) on/off.
 TEXT_LEGEND: dict[tuple[bool, bool, bool], str] = {
     (False, False, False): ".",
     (True, False, False): "R",
@@ -135,10 +135,10 @@ TEXT_STYLES = ("auto", "color", "mono")
 def text_preview(image: Image.Image, *, style: str = "auto") -> str:
     """Render a frame as plain text, one character per pixel.
 
-    Each pixel snaps to the panel's 8 colours with the codec's ``>127``
+    Each pixel snaps to the panel's 8 colors with the codec's ``>127``
     threshold, so the grid shows what the panel would light. ``color`` writes
-    the colour letter (TEXT_LEGEND); ``mono`` writes ``#`` for any lit pixel;
-    ``auto`` picks ``mono`` when the frame lights at most one colour, which
+    the color letter (TEXT_LEGEND); ``mono`` writes ``#`` for any lit pixel;
+    ``auto`` picks ``mono`` when the frame lights at most one color, which
     keeps text legible, and ``color`` otherwise.
     """
     if style not in TEXT_STYLES:
@@ -179,8 +179,8 @@ def image_from_text(
 ) -> Image.Image:
     """Read a frame written one character per pixel: the inverse of ``text_preview``.
 
-    ``.`` is off, a TEXT_LEGEND letter (either case) lights that colour, ``#`` lights
-    ``foreground``, and ``colors`` gives any other letter a colour or recolours a
+    ``.`` is off, a TEXT_LEGEND letter (either case) lights that color, ``#`` lights
+    ``foreground``, and ``colors`` gives any other letter a color or recolors a
     legend one. Whitespace around a row is ignored, but every row must be the same
     width, so a miscounted row is an error instead of a skewed picture.
     """

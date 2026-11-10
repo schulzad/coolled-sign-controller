@@ -1,14 +1,14 @@
 """Measure the CoolLEDX panel's temporal-dither ceiling (flicker-fusion probe).
 
-Temporal dithering / frame-rate control fakes extra colours by alternating two
-native colours fast enough that the eye time-averages them (black<->white => grey,
+Temporal dithering / frame-rate control fakes extra colors by alternating two
+native colors fast enough that the eye time-averages them (black<->white => gray,
 red<->green => yellow, ...). Whether that works on THIS panel depends entirely on
 how fast the firmware actually advances frames -- an unmeasured claim. This script
 finds out empirically.
 
-For each colour pair it uploads a 2-frame loop (frame A, frame B) and steps the
+For each color pair it uploads a 2-frame loop (frame A, frame B) and steps the
 per-frame hold time from slow to fast. You watch the sign and note, per pair, the
-speed at which it stops flickering and fuses into the target colour (and the speed
+speed at which it stops flickering and fuses into the target color (and the speed
 below which it just strobes). Report those numbers back and we size the real
 spatiotemporal still-quantizer around them.
 
@@ -40,9 +40,9 @@ from opensign.protocol.codec import select_codec
 
 FFF1 = "0000fff1-0000-1000-8000-00805f9b34fb"
 
-# name -> (colour A, colour B, what it should look like once fused)
+# name -> (color A, color B, what it should look like once fused)
 PAIRS: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], str]] = {
-    "white_black": ((255, 255, 255), (0, 0, 0), "flat 50% grey"),
+    "white_black": ((255, 255, 255), (0, 0, 0), "flat 50% gray"),
     "red_green": ((255, 0, 0), (0, 255, 0), "yellow"),
     "red_black": ((255, 0, 0), (0, 0, 0), "dim/50% red"),
     "blue_cyan": ((0, 0, 255), (0, 255, 255), "blue-cyan blend (low contrast, easiest)"),
@@ -50,8 +50,8 @@ PAIRS: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], str]] = {
 DEFAULT_SPEEDS = [100, 50, 33, 20, 12, 8, 5, 3, 2, 1]
 
 
-def _solid(width: int, height: int, colour: tuple[int, int, int]) -> Image.Image:
-    return Image.new("RGB", (width, height), colour)
+def _solid(width: int, height: int, color: tuple[int, int, int]) -> Image.Image:
+    return Image.new("RGB", (width, height), color)
 
 
 def _checker(width: int, height: int, a: tuple[int, int, int], b: tuple[int, int, int], invert: bool) -> Image.Image:
@@ -65,7 +65,7 @@ def _checker(width: int, height: int, a: tuple[int, int, int], b: tuple[int, int
 
 
 def _build_bundle(width: int, height: int, frame_a: Image.Image, frame_b: Image.Image, ms: int) -> FrameBundle:
-    # coolledx_speed metadata is the authoritative ms/frame the codec honours.
+    # coolledx_speed metadata is the authoritative ms/frame the codec honors.
     return FrameBundle.from_images(
         [frame_a, frame_b],
         [ms, ms],
@@ -108,8 +108,8 @@ def _frames_for(pair: str, width: int, height: int) -> tuple[Image.Image, Image.
             _checker(width, height, (255, 255, 255), (0, 0, 0), invert=False),
             _checker(width, height, (255, 255, 255), (0, 0, 0), invert=True),
         )
-    colour_a, colour_b, _ = PAIRS[pair]
-    return _solid(width, height, colour_a), _solid(width, height, colour_b)
+    color_a, color_b, _ = PAIRS[pair]
+    return _solid(width, height, color_a), _solid(width, height, color_b)
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -131,7 +131,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     if not execute:
         for name, ms in _plan(pairs, speeds):
-            target = "spatiotemporal 50% grey" if name == "checker_wb" else PAIRS[name][2]
+            target = "spatiotemporal 50% gray" if name == "checker_wb" else PAIRS[name][2]
             encoded = codec.encode_frame_bundle(_build_bundle(width, height, *_frames_for(name, width, height), ms))
             print(
                 f"  {name:12s} @ {ms:3d}ms (~{_hz(ms):5.0f}Hz)  chunks={len(encoded.packets)}  "
@@ -167,7 +167,7 @@ async def main_async(args: argparse.Namespace) -> int:
             print(f"Set brightness -> {args.brightness}", flush=True)
 
         for name, ms in _plan(pairs, speeds):
-            target = "spatiotemporal 50% grey" if name == "checker_wb" else PAIRS[name][2]
+            target = "spatiotemporal 50% gray" if name == "checker_wb" else PAIRS[name][2]
             bundle = _build_bundle(width, height, *_frames_for(name, width, height), ms)
             packets = list(codec.encode_frame_bundle(bundle).packets)
             print(

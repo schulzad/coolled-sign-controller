@@ -1,0 +1,78 @@
+{
+  "stats_version": 1,
+  "piece": "ringed-planet",
+  "canvas": {
+    "width": 384,
+    "height": 384,
+    "pixels": 147456,
+    "panels": 144.0
+  },
+  "frames": 1,
+  "duration_ms": 1000,
+  "picture": {
+    "lit_pixels": 39817,
+    "lit_share": 0.27,
+    "colours": [
+      "blue",
+      "cyan",
+      "magenta",
+      "red",
+      "white",
+      "yellow"
+    ]
+  },
+  "scene": {
+    "bytes": 245757,
+    "sprites": 34,
+    "placements": 257,
+    "characters": 219896
+  },
+  "provenance": {
+    "lit_share_baked": 0.982,
+    "lit_share_hand": 0.018,
+    "baked_sprites": 13,
+    "hand_sprites": 21,
+    "hand_characters": 1483
+  },
+  "records": {
+    "versions": 12,
+    "looks": 25,
+    "looks_by_view": {
+      "region": 17,
+      "overview": 7,
+      "final": 1
+    },
+    "scales_px": [
+      2,
+      4,
+      5,
+      6,
+      7,
+      10
+    ],
+    "logged_changes": 19,
+    "traces": 3,
+    "traced_pixels": 9
+  },
+  "session": {
+    "started": "2026-10-31T00:22:00-05:00",
+    "tool_calls": 89,
+    "tool_calls_by_tool": {
+      "StrReplace": 33,
+      "Read": 25,
+      "Shell": 23,
+      "Write": 6,
+      "GetDynamicTools": 1,
+      "CallDynamicTool": 1
+    },
+    "pictures_read": 25,
+    "generated_characters": {
+      "tool_arguments": 72443,
+      "messages_and_reasoning": 112994
+    },
+    "generated_tokens_estimate": 46359,
+    "picture_tokens_estimate": 23855,
+    "ended": "2026-10-31T00:50-05:00",
+    "minutes": 28
+  }
+}

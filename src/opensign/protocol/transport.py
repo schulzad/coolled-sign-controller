@@ -33,7 +33,7 @@ def _classify_ack(
     Without a decoder the transport is device-agnostic and can only say a
     notification *arrived* (``status=None``), which the caller counts as an ack.
     With a codec decoder it distinguishes an explicit success from a checksum
-    error / NAK so an unverified transfer is never mislabelled ack-verified.
+    error / NAK so an unverified transfer is never mislabeled ack-verified.
     """
     if decoder is None:
         return {

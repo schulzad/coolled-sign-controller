@@ -1,7 +1,7 @@
 Seedscript module description language 2.3
 
 Module("PixelFramePipeline") {
-  description: "Compile a scene, an animated source (text, static image, GIF/APNG), or a still expanded into a temporal (frame-rate-control) subframe loop into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, tone-remap with levels, resample the timeline onto the device's timing model, quantize to the panel's governed palette (or temporally dither a still), and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (multi-frame 64x16 GIFs displayed; the frame budget was pinned at 79 on 2026-08-15); temporal-colour stills confirmed the same day against the ~62 Hz flicker-fusion ceiling."
+  description: "Compile a scene, an animated source (text, static image, GIF/APNG), or a still expanded into a temporal (frame-rate-control) subframe loop into a transport-neutral, display-ready RGB888 FrameBundle at exact panel geometry: decode and composite frames, fit and orient, tone-remap with levels, resample the timeline onto the device's timing model, quantize to the panel's governed palette (or temporally dither a still), and hash. It hands off a FrameBundle at that boundary -- it does NOT frame wire bytes, select a codec, touch Bluetooth, or gate execution. Encoding belongs to CoolLEDXProtocol; delivery, the execute gate, tracing, and display confirmation belong to SignControlService. First lit output: a 64x16 'HELLO' rendered on 2026-07-13; animation compilation confirmed on hardware 2026-07-13 (multi-frame 64x16 GIFs displayed; the frame budget was pinned at 79 on 2026-08-15); temporal-color stills confirmed the same day against the ~62 Hz flicker-fusion ceiling."
   metaphor: "A print shop's composing room: set the type, square the plate, and proof it against the original -- but never run the press."
   version: "2.3"
   tags: ['coolledx', 'rendering', 'compile', 'animation', 'layer:animation', 'transport-neutral', 'verified-hardware']
@@ -48,7 +48,7 @@ Module("PixelFramePipeline") {
       }
 
       Directive("/compile_temporal_still") {
-        description: "Compile a STILL image into a fast N-subframe loop that fakes intermediate colours by temporal dithering (frame-rate control): fit/orient, tone-remap with levels, expand into N>=2 binarized subframes, and time the loop above the panel's flicker-fusion ceiling so each pixel's duty cycle reads as a colour the 1-bit panel cannot show in a single frame. Past floor(1000 / fusion_hz) subframes (16 at 62 Hz) the 1 ms hold floor cannot keep the loop that fast; such a request still compiles, so the panel can be overdriven on purpose, and its diagnostics carry a fusion warning. Produces an ordinary multi-frame FrameBundle that rides the verified 0x04 animation path -- no protocol change. For stills only: the loop IS the picture and must carry no motion."
+        description: "Compile a STILL image into a fast N-subframe loop that fakes intermediate colors by temporal dithering (frame-rate control): fit/orient, tone-remap with levels, expand into N>=2 binarized subframes, and time the loop above the panel's flicker-fusion ceiling so each pixel's duty cycle reads as a color the 1-bit panel cannot show in a single frame. Past floor(1000 / fusion_hz) subframes (16 at 62 Hz) the 1 ms hold floor cannot keep the loop that fast; such a request still compiles, so the panel can be overdriven on purpose, and its diagnostics carry a fusion warning. Produces an ordinary multi-frame FrameBundle that rides the verified 0x04 animation path -- no protocol change. For stills only: the loop IS the picture and must carry no motion."
         metaphor: "Fanning one plate into a rapid flicker-book so the eye blends the ink into shades that no single plate holds."
         parameters: {
           image: { type: "Image|path", description: "Single still to expand.", required: true },
@@ -64,6 +64,21 @@ Module("PixelFramePipeline") {
         actions: { fit: "fit_and_orient", level: "apply_levels", expand: "temporal_dither_still", pace: "choose_fused_speed", bundle: "build_frame_bundle", report: "compile_diagnostics" }
         kernel: "CompileKernel"
         tags: ["entry", "compile", "temporal", "frame-rate-control"]
+      }
+
+      Directive("/compile_sprite_scene") {
+        description: "Compile a scene of small sprites written as text into a hashed FrameBundle: sprites placed by coordinate, recolored and flipped per placement, items in every frame with an optional frames list on top, and items that step, cycle and wrap from frame to frame. The frame count is settled, and refused over the budget, before anything is stamped, and a moving item in a one-frame scene is refused with the length that crosses the panel once. Shipped as opensign.animation.scene.compile_scene, which the coolled-verbs scene noun, scripts/picture.py and scripts/render_scenes.py call."
+        metaphor: "Hanging cut-out stamps on a pegboard and pressing every frame from them."
+        parameters: {
+          scene: { type: "object", description: "sprites (name to rows), items, and optionally frames and length.", required: true },
+          width: { type: "int", description: "Canvas width: the panel's for a send.", required: true },
+          height: { type: "int", description: "Canvas height.", required: true },
+          frame_ms: { type: "int", description: "The hold every frame shows, one global speed.", required: false, default: 200 },
+          max_frames: { type: "int", description: "Frames one upload may carry (79 at 64x16); none for a canvas never sent whole.", required: false }
+        }
+        actions: { count: "scene_frame_count", place: "expand_placement", stamp: "stamp_sprite", bundle: "build_frame_bundle" }
+        kernel: "CompileKernel"
+        tags: ["entry", "compile", "scene"]
       }
     }
 
@@ -112,13 +127,13 @@ Module("PixelFramePipeline") {
       }
 
       Function("fit_and_orient") {
-        description: "Fit frames to panel geometry (contain/cover/stretch) and apply rotation and flips so the physical orientation matches the design. Runs before quantization so the palette snap sees final pixels. The resample filter is chosen by colour-reduction INTENT, not just by scale: dither_mode 'none' uses NEAREST because a smoothing filter (LANCZOS/box) manufactures grey edge pixels that the codec's hard >127 threshold then snaps into scatter (the two-frame.gif glitch, 2026-07-13); dithered modes keep the size-aware default (LANCZOS on downscale) since they can represent the intermediate tones a smooth filter produces. Crisp pixel-art therefore wants none+NEAREST and panel-native or integer-scaled sources; photos/video want a smoothing filter + a dither."
+        description: "Fit frames to panel geometry (contain/cover/stretch) and apply rotation and flips so the physical orientation matches the design. Runs before quantization so the palette snap sees final pixels. The resample filter is chosen by color-reduction INTENT, not just by scale: dither_mode 'none' uses NEAREST because a smoothing filter (LANCZOS/box) manufactures gray edge pixels that the codec's hard >127 threshold then snaps into scatter (the two-frame.gif glitch, 2026-07-13); dithered modes keep the size-aware default (LANCZOS on downscale) since they can represent the intermediate tones a smooth filter produces. Crisp pixel-art therefore wants none+NEAREST and panel-native or integer-scaled sources; photos/video want a smoothing filter + a dither."
         metaphor: "Squaring every plate in the chase, choosing a sharp or soft lens to match the ink."
         input_parameters: {
           frames: { type: "array[Image]", description: "Rendered/decoded frames.", required: true },
           width: { type: "int", description: "Panel width.", required: true },
           height: { type: "int", description: "Panel height.", required: true },
-          dither_mode: { type: "string", description: "Colour-reduction intent; selects the resample filter (none -> NEAREST, else size-aware smoothing).", required: false, default: "none" },
+          dither_mode: { type: "string", description: "Color-reduction intent; selects the resample filter (none -> NEAREST, else size-aware smoothing).", required: false, default: "none" },
           orientation: { type: "object", description: "rotation, flip_horizontal, flip_vertical.", required: false }
         }
         output_format: { frames: "array[Image] Fitted, oriented frames." }
@@ -156,7 +171,7 @@ Module("PixelFramePipeline") {
       }
 
       Function("quantize_frame") {
-        description: "Snap each RGB frame to a supplied target palette (derived from the profile color_mode; e.g. seven-color -> the 8 corners of the RGB cube). Default dithering is a fixed panel-coordinate ordered (Bayer) matrix, which is deterministic and temporally stable across frames that differ only slightly -- avoiding the crawl that frame-local error diffusion causes in animation. Error diffusion is an opt-in mode for single static images. Mode 'none' skips dithering and lets the codec's hard >127 threshold snap each channel; it is only crisp when paired with NEAREST fit (see fit_and_orient) and a source already near the channel extremes (synthetic art, text, UI), otherwise resample greys scatter. Output pixels are exactly palette colors, so the codec's 1-bit threshold becomes lossless. The palette is an input: this function never reads the wire format."
+        description: "Snap each RGB frame to a supplied target palette (derived from the profile color_mode; e.g. seven-color -> the 8 corners of the RGB cube). Default dithering is a fixed panel-coordinate ordered (Bayer) matrix, which is deterministic and temporally stable across frames that differ only slightly -- avoiding the crawl that frame-local error diffusion causes in animation. Error diffusion is an opt-in mode for single static images. Mode 'none' skips dithering and lets the codec's hard >127 threshold snap each channel; it is only crisp when paired with NEAREST fit (see fit_and_orient) and a source already near the channel extremes (synthetic art, text, UI), otherwise resample grays scatter. Output pixels are exactly palette colors, so the codec's 1-bit threshold becomes lossless. The palette is an input: this function never reads the wire format."
         metaphor: "Choosing ink from a fixed tray and stippling with a stencil that never shifts between plates."
         input_parameters: {
           frame: { type: "Image", description: "Fitted RGB frame.", required: true },
@@ -240,10 +255,10 @@ Module("PixelFramePipeline") {
       }
 
       Function("temporal_dither_still") {
-        description: "Expand ONE fitted still into N>=2 binarized subframes for temporal colour (frame-rate control). A single spatiotemporal ordered dither: for subframe t the per-pixel threshold is (order_seq[t] + bayer(x,y)) / N, where the Bayer term dithers in space (neighbours round opposite ways) and order_seq (a van der Corput / bit-reversal permutation) spreads each pixel's on-frames as evenly as possible in time to push flicker to the highest frequency the frame count allows. Output channels are exactly 0 or 255 -- each subframe is palette-exact -- but a pixel's DUTY CYCLE across the loop reads, above fusion, as one of N+1 intermediate levels per channel. Caveats: duty couples to luminance (a 50% level is ~half brightness) and channels are not perceptually matched, so the reachable perceived gamut is a luminance-limited volume, not the full cube. Stills only -- the loop IS the picture."
+        description: "Expand ONE fitted still into N>=2 binarized subframes for temporal color (frame-rate control). A single spatiotemporal ordered dither: for subframe t the per-pixel threshold is (order_seq[t] + bayer(x,y)) / N, where the Bayer term dithers in space (neighbors round opposite ways) and order_seq (a van der Corput / bit-reversal permutation) spreads each pixel's on-frames as evenly as possible in time to push flicker to the highest frequency the frame count allows. Output channels are exactly 0 or 255 -- each subframe is palette-exact -- but a pixel's DUTY CYCLE across the loop reads, above fusion, as one of N+1 intermediate levels per channel. Caveats: duty couples to luminance (a 50% level is ~half brightness) and channels are not perceptually matched, so the reachable perceived gamut is a luminance-limited volume, not the full cube. Stills only -- the loop IS the picture."
         metaphor: "Slicing one drawing into a rapid flip-book whose average is a tone the page could never print."
         input_parameters: {
-          still: { type: "Image", description: "Single fitted, levelled RGB still.", required: true },
+          still: { type: "Image", description: "Single fitted, leveled RGB still.", required: true },
           subframes: { type: "int", description: "N >= 2; yields N+1 duty levels per channel.", required: true },
           order: { type: "int", description: "Bayer matrix order for the spatial mask.", required: false, default: 4 }
         }
@@ -278,6 +293,74 @@ Module("PixelFramePipeline") {
               speed_ms = speed_override_ms or max(1, int(1000 / (fusion_hz * subframes)))
               return speed_ms, round(1000 / (speed_ms * subframes), 1)
         tags: ["pure", "verified-hardware"]
+      }
+
+      Function("scene_frame_count") {
+        description: "Decide how many frames a sprite scene has before anything is stamped: the length it states, or else the least common multiple of its frames list, every list an item repeats (its sprites or its cycle), and every wrapping item's trip round the panel. Refused over the budget, naming the count and what set it; a stated length shorter than one of those lists is refused too, since part of the list would never show."
+        metaphor: "Counting the hooks before hanging anything."
+        input_parameters: {
+          scene: { type: "object", description: "The scene: sprites, items, and optionally frames and length.", required: true },
+          panel_size: { type: "array[int]", description: "The canvas's width and height, which a wrapping trip goes round.", required: true },
+          budget_frames: { type: "int", description: "Frames one upload may carry (79 at 64x16), or none.", required: false }
+        }
+        output_format: {
+          frames: "int Frames the scene compiles to.",
+          raises: "ValueError — when the count exceeds budget_frames, naming the count, the repeats behind it and the budget; or when a stated length is shorter than a list."
+        }
+        implementation: |
+          def scene_frame_count(scene, panel_size, budget_frames):
+              repeats = the frames list's length, and the length of every item's sprite list and cycle
+              if scene states a length:
+                  refuse a length shorter than any repeat
+                  count = that length
+              else:
+                  add every wrapping item's trip: (panel + box) / math.gcd(step, panel + box) on each axis it moves
+                  count = the least common multiple of the repeats, or 1
+              if count > budget_frames:
+                  refuse before rendering, naming count, the repeats behind it, and budget_frames
+              return count
+        tags: ["pure", "budget"]
+      }
+
+      Function("expand_placement") {
+        description: "The placement an item makes in one frame: the sprite its list gives that frame, at the position its cycle gives (or at), stepped on by the frame index times move, and, with wrap, folded so a sprite leaving one edge comes back in at the opposite one. The fold uses the item's widest and tallest sprite, so its trip is fixed. An item with none of these comes back unchanged, which is why a scene using none of them keeps its bytes."
+        metaphor: "Chalking where the tool hangs at each hook, from the arrow and the rotating tag."
+        input_parameters: {
+          item: { type: "object", description: "An item: a sprite name or list of names, at or cycle, and optionally move and wrap.", required: true },
+          index: { type: "int", description: "The frame.", required: true },
+          panel_size: { type: "array[int]", description: "The canvas's width and height, which wrap folds positions into.", required: true }
+        }
+        output_format: {
+          placement: "object The item as a plain placement for that frame: one sprite at one position."
+        }
+        implementation: |
+          def expand_placement(item, index, panel_size):
+              sprite = the sprite list's entry index modulo its length, or the one sprite
+              position = the cycle's entry index modulo its length, or at
+              position = position plus index times move
+              if wrap: fold each moving axis into [-box, panel) so the sprite re-enters from the opposite edge
+              return the item with that sprite and position
+        tags: ["pure"]
+      }
+
+      Function("stamp_sprite") {
+        description: "Stamp one sprite onto a frame, recolored and flipped as the placement says: its letters draw on top, K as off unless the placement recolors it, and . leaves what lies beneath showing."
+        metaphor: "Pressing the stamp down, eraser edge and all."
+        input_parameters: {
+          canvas: { type: "Image", description: "The frame so far.", required: true },
+          sprite: { type: "string", description: "The sprite's rows.", required: true },
+          placement: { type: "object", description: "The placement: at, colors, and optionally mirror.", required: true }
+        }
+        output_format: {
+          canvas: "Image — the frame with the sprite stamped on it."
+        }
+        implementation: |
+          def stamp_sprite(canvas, sprite, placement):
+              image = the sprite in the placement's colors, K black unless recolored
+              flip the image and its mask on the placement's mirror axis when it has one
+              paste the image at placement.at through the mask, so K turns pixels off and . leaves them
+              return canvas
+        tags: ["pure"]
       }
     }
 
@@ -321,27 +404,42 @@ Module("PixelFramePipeline") {
         ]
         tags: ["pipe", "transport-neutral", "temporal", "frame-rate-control"]
       }
+
+      Chain("CompileSpriteSceneFlow") {
+        description: "Sprite scene -> frame count settled against the budget -> each item expanded for each frame -> stamped in order -> hashed bundle."
+        metaphor: "Count the hooks, chalk where each tool hangs, press every frame, and proof the run."
+        links: [
+          { source: "/compile_sprite_scene", target: "scene_frame_count", description: "The length, or the least common multiple of what repeats, refused over budget before anything is stamped." },
+          { source: "scene_frame_count", target: "expand_placement", description: "Each item's sprite and position in each frame." },
+          { source: "expand_placement", target: "stamp_sprite", description: "Items first, then the frame's own placements, later ones on top." },
+          { source: "stamp_sprite", target: "build_frame_bundle", description: "Bundle the frames at one global speed and hash them." }
+        ]
+        tags: ["pipe", "transport-neutral", "scene", "budget"]
+      }
     }
 
     Kernels {
       Kernel("CompileKernel") {
         description: "Governs source-to-bundle compilation; keeps rendering pure and transport-neutral and hands off exactly one FrameBundle at the bundle boundary."
         metaphor: "The compositor foreman who owns the plates but never the press."
-        directive_chains: ['CompileSceneFlow', 'CompileAnimationFlow', 'CompileTemporalStillFlow']
+        directive_chains: ['CompileSceneFlow', 'CompileAnimationFlow', 'CompileTemporalStillFlow', 'CompileSpriteSceneFlow']
         invariants: [
           "Compilation emits transport-neutral RGB888 and never imports Bluetooth, packet framing, or device opcodes.",
           "The target palette is an input (derived by DeviceProfileLedger from the profile color_mode); the compiler never reads the wire format.",
           "Quantized frames contain only exact palette colors, so the codec's 1-bit threshold is lossless.",
           "Levels (black/white point) are a pre-quantization tone control: they run before dithering and the codec threshold, never after quantization.",
           "Animation dithering defaults to a panel-anchored ordered matrix for temporal stability; error diffusion is an opt-in static-image mode.",
-          "The resample filter follows colour-reduction intent: dither_mode 'none' fits with NEAREST (a smoothing filter manufactures grey edges the codec's hard >127 threshold scatters), while dithered modes use size-aware smoothing.",
+          "The resample filter follows color-reduction intent: dither_mode 'none' fits with NEAREST (a smoothing filter manufactures gray edges the codec's hard >127 threshold scatters), while dithered modes use size-aware smoothing.",
           "Variable source timing is resampled onto the device single global speed or rejected in strict mode -- never silently dropped.",
-          "Temporal (FRC) compilation expands a STILL into N>=2 binarized subframes: each subframe is palette-exact, but the PERCEIVED colour is inter-palette via duty-cycle time-averaging -- it is not a new single-frame colour.",
+          "Temporal (FRC) compilation expands a STILL into N>=2 binarized subframes: each subframe is palette-exact, but the PERCEIVED color is inter-palette via duty-cycle time-averaging -- it is not a new single-frame color.",
           "A temporal loop is timed above the panel's measured flicker-fusion ceiling (device fact, ~62 Hz) whenever it can be: loop_period = N * speed_ms <= 1000 / fusion_hz, or the dither reads as visible flicker instead of a fused tone. A loop that cannot be (more than floor(1000 / fusion_hz) subframes at the 1 ms hold floor) is warned about, never refused, so the panel can be overdriven on purpose -- and never flickers silently.",
           "Temporal expansion is for stills only; it must carry no motion, and its subframe count still fits the codec's 30 KiB payload limit (79 frames at 64x16).",
           "Frame-bundle geometry must equal the panel geometry, and the frame count must fit the codec's 30 KiB payload limit (79 at 64x16) before hand-off.",
-          "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames with each channel cut at the codec's 127 threshold, so even a dither 'none' preview shows only panel colours, and a temporal still's .png preview is their blend -- the ideal the panel approximates, not proof of what it shows.",
-          "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService."
+          "Bundle hashes cover geometry, frames, timing, loop policy, palette, and compiler version; previews are rendered from the quantized frames with each channel cut at the codec's 127 threshold, so even a dither 'none' preview shows only panel colors, and a temporal still's .png preview is their blend -- the ideal the panel approximates, not proof of what it shows.",
+          "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService.",
+          "A sprite scene's frame count is settled before anything is stamped -- its stated length, or the least common multiple of its frames list, every list an item repeats and every wrapping item's trip round the panel -- and is refused over the upload budget, naming what set it, never truncated.",
+          "Frame-to-frame changes (move, wrap, cycle, a list of sprites) belong on items, which appear in every frame; an entry of a scene's frames list is already one frame's placement and refuses them.",
+          "SCENES KEEP THEIR BYTES: a sprite scene that uses none of move, wrap, cycle, a list of sprites, mirror, length or an unmapped K compiles to exactly the packets it did before those existed, so saved scenes and their plan_ids never change."
         ]
         tags: ["compile", "transport-neutral", "verified-hardware"]
       }
@@ -349,13 +447,14 @@ Module("PixelFramePipeline") {
   }
 
   Semantics: {
-    layer: "opensign.animation -- src/opensign/animation (studio/preview); PixelAnimationStudio compile helpers"
+    layer: "opensign.animation -- src/opensign/animation (studio/preview/scene); PixelAnimationStudio compile helpers"
     owns: |
       - Source decoding: text, static image, and bounded animated GIF/APNG (composited, alpha-resolved) frames.
+      - Frames written as text (compile_drawing) and sprite scenes (compile_scene, opensign.animation.scene): sprites placed by coordinate, recolored and flipped per placement, K painting off, items that step, wrap and cycle from frame to frame, and the frame count settled against the budget before stamping. Motion, cycles, and mirror and erase graduated from FeatureBoard cards F6, F7 and F13 on 2026-11-02; anchors, shapes and scrolling scenes (F8, F10, F11) are still on the board.
       - Fit/orient to panel geometry.
       - Levels (black/white point) tone remapping before quantization, manual or auto (compute_auto_levels: a value-histogram contrast stretch, read from the source so letterbox bars do not skew it, that rescues low-contrast art); reports which channels can actually cross the panel's 1-bit threshold.
       - Palette-aware quantization + dithering (ordered default for animation; error diffusion opt-in for static).
-      - Temporal-colour (frame-rate-control) expansion of a still into N binarized subframes timed above the fusion ceiling where it can be (warned, not refused, where it cannot).
+      - Temporal-color (frame-rate-control) expansion of a still into N binarized subframes timed above the fusion ceiling where it can be (warned, not refused, where it cannot).
       - Timeline resampling onto the device single-speed model, with honest diagnostics.
       - Transport-neutral FrameBundle assembly with per-frame hashes, a bundle_hash, and quantized previews.
     delegates: |
@@ -368,15 +467,15 @@ Module("PixelFramePipeline") {
         multi-frame 64x16 GIFs displayed (the frame budget was later pinned at 79,
         2026-08-15); the two-frame.gif scatter under dither=none was
         traced to LANCZOS resample + hard threshold and fixed by none -> NEAREST fit.
-      - Temporal colour (FRC) confirmed 2026-07-13: a still shown as an N-subframe loop
+      - Temporal color (FRC) confirmed 2026-07-13: a still shown as an N-subframe loop
         reads as intermediate tones; the ~62 Hz fusion ceiling was measured by
         scripts/flicker_probe.py, and running.png (a dark UI still) was rescued from a
         washed-out glow by levels (apply_levels), now automatable via --auto-levels (2026-07-14).
     open_work: |
       - GIF decode with disposal + alpha compositing is shipped as PixelAnimationStudio.create_gif_bundle (Pillow ImageSequence.Iterator + composite_frame, evenly subsampled to the device frame-buffer budget) and driven by both coolled gif and the API /animation route; remaining is unifying it under the design-level create_animation_bundle name and confirming APNG coverage/tests.
       - The scrambled 'Running' turned out to be the IMAGE path on a low-contrast AA badge (not text rendering): red/blue never cross the 1-bit threshold and green straddles it. Addressed 2026-07-14 by --auto-levels (value-histogram stretch) plus a dark-channel warning; the cleaner long-term answer for actual text is the native text path (crisp 1-bit glyphs, no downscale).
-      - Temporal colour is implemented (create_temporal_image_bundle) and surfaced in metadata (subframes/loop_hz/fusion_hz/levels); remaining: per-channel perceptual matching and a proper perceived-gamut map so a target RGB picks subframe duty per channel.
-      - A line that crawls down the panel from top to bottom at high subframe counts (reported when maxing out at 79 subframes, 2026-10-29; it moves, it is not a stationary stripe) is explained so far only by a model. Nothing in the subframes moves, so the motion comes from how the panel draws them: it redraws its rows on its own timer while the animation swaps subframes on another, and when the two drift slightly against each other, the rows that catch the wrong mix of subframes shift a little with every swap, so the seam rolls through the picture at the beat frequency, like the rolling bar on a filmed TV. The bit-reversal order makes that wrong mix as unequal as possible (for a power-of-two N the even subframes hold exactly the lowest thresholds). In a 1/16 row-scan simulation of a flat 50% grey, a 2 ms scan turns N=16 at 1 ms into fully lit rows beside fully dark ones and N=79 into crawling bands. The crawl is itself a measurement: a single slow line crosses the panel as many times per second as the panel's refresh rate is away, in Hz, from the nearest whole multiple of the subframe rate (1000 Hz at 1 ms holds); two evenly spaced lines would mean a half multiple. Unmeasured: the panel's refresh rate (it bounds useful N at roughly refresh_hz / fusion_hz), whether it scans rows or columns, and whether a 79-frame loop's per-frame fetch from storage disturbs the redraw on its own (79 identical frames at 1 ms would tell). Until then the dependable fix is fewer subframes.
+      - Temporal color is implemented (create_temporal_image_bundle) and surfaced in metadata (subframes/loop_hz/fusion_hz/levels); remaining: per-channel perceptual matching and a proper perceived-gamut map so a target RGB picks subframe duty per channel.
+      - A line that crawls down the panel from top to bottom at high subframe counts (reported when maxing out at 79 subframes, 2026-10-29; it moves, it is not a stationary stripe) is explained so far only by a model. Nothing in the subframes moves, so the motion comes from how the panel draws them: it redraws its rows on its own timer while the animation swaps subframes on another, and when the two drift slightly against each other, the rows that catch the wrong mix of subframes shift a little with every swap, so the seam rolls through the picture at the beat frequency, like the rolling bar on a filmed TV. The bit-reversal order makes that wrong mix as unequal as possible (for a power-of-two N the even subframes hold exactly the lowest thresholds). In a 1/16 row-scan simulation of a flat 50% gray, a 2 ms scan turns N=16 at 1 ms into fully lit rows beside fully dark ones and N=79 into crawling bands. The crawl is itself a measurement: a single slow line crosses the panel as many times per second as the panel's refresh rate is away, in Hz, from the nearest whole multiple of the subframe rate (1000 Hz at 1 ms holds); two evenly spaced lines would mean a half multiple. Unmeasured: the panel's refresh rate (it bounds useful N at roughly refresh_hz / fusion_hz), whether it scans rows or columns, and whether a 79-frame loop's per-frame fetch from storage disturbs the redraw on its own (79 identical frames at 1 ms would tell). Until then the dependable fix is fewer subframes.
       - Rejected on hardware 2026-10-29: staggering pixels through the subframe order with a linear phase ramp (pixel (x, y) playing order_seq[(t + x + y) % N]). The row-scan simulation, which measured only row averages and whole-panel brightness, showed it clearing the stripes; on the panel it drew angled lines that streak across. Pixels on one diagonal play the same subframe together, so a dark tone at N=79 becomes diagonal lines about 20 px apart that shift one pixel every 1 ms subframe. A 79 ms loop carries energy below fusion that no reordering removes, and a coherent spatial offset turns it into visible motion. Any later phase scheme must avoid coherent spatial structure, and can only help once the loop itself is above fusion.
       - bundle_hash cache to skip re-transfer when the panel already holds an asset.
   }

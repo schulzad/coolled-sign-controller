@@ -286,7 +286,7 @@ Module("GuardedTransport") {
           "Chunk size is chosen conservatively and its provenance is always recorded.",
           "Ack pacing is engaged only when the encoded payload's flow_control.await_ack is set and a notify channel is subscribed.",
           "When the codec supplies an ack decoder, a packet completes only on a decoded success; a decoded checksum-error re-sends that packet (nak_retries), any other decoded error status stops the transfer, and an undecodable notification is arrived-but-unverified, never success.",
-          "A missing ack is a soft signal (ack_timeouts); host-write success and ack-verified success are reported as distinct signals, so an unverified or NAK-exhausted transfer is never mislabelled ack-verified.",
+          "A missing ack is a soft signal (ack_timeouts); host-write success and ack-verified success are reported as distinct signals, so an unverified or NAK-exhausted transfer is never mislabeled ack-verified.",
           "A long upload cannot hang: every write is bounded by write_timeout, and after max_consecutive_ack_timeouts missed acks in a row the rest of the transfer stops waiting for acks. There is no overall transfer deadline, cancellation, or per-panel serialization.",
           "Progress counts delivered packets only: a packet the panel rejects is never reported as delivered, and a dry run never reports progress.",
           "Host write success, per-chunk ack telemetry, and display confirmation are three separate truths.",

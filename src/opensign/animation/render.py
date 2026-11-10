@@ -411,7 +411,7 @@ def composite_frame(
 
     ``ImageSequence`` yields frames in their native mode (often palette "P" with
     a transparent index, or "RGBA"). Converting straight to "RGB" bakes in the
-    transparent index's colour (usually black) and ignores the requested
+    transparent index's color (usually black) and ignores the requested
     background, so composite through RGBA instead.
     """
     rgba = frame.convert("RGBA")
@@ -420,13 +420,13 @@ def composite_frame(
 
 
 def detect_background_color(image: Image.Image, *, buckets: int = 16) -> tuple[int, int, int]:
-    """Guess a frame's background colour from its border pixels.
+    """Guess a frame's background color from its border pixels.
 
     A background (a sky, a solid card) dominates the perimeter of a frame, so
-    the most common colour around the edge is a good chroma-key guess. Colours
+    the most common color around the edge is a good chroma-key guess. Colors
     are bucketed to ``buckets`` levels per channel before counting so an
     anti-aliased gradient still clusters into one bin; the winning bucket's
-    centre is returned. Detect on the *source* frame, before letterboxing, or a
+    center is returned. Detect on the *source* frame, before letterboxing, or a
     ``contain`` fit's black bars win the vote.
     """
     rgb = image.convert("RGB")
@@ -458,7 +458,7 @@ def knockout_color(
 
     Knocks a flat/bright background out to black so a 1-bit-per-channel panel --
     where any channel ``>127`` lights up -- shows only the subject instead of a
-    fully-lit board, while leaving the subject's own colours untouched (unlike a
+    fully-lit board, while leaving the subject's own colors untouched (unlike a
     luma cut, which would also drop bright foreground pixels). Distance runs
     0..441 across the RGB cube.
     """
@@ -552,9 +552,9 @@ def apply_levels(
 
     Channel values at or below ``black_point`` clip to 0 and values at or above
     ``white_point`` clip to 255. This is the fix for "dark background washes out"
-    on the panel: a source whose background is dark grey (not true black) gets
+    on the panel: a source whose background is dark gray (not true black) gets
     faithfully rendered as a dim glow by dithering -- especially temporal
-    dithering with many subframes -- so raising ``black_point`` above that grey
+    dithering with many subframes -- so raising ``black_point`` above that gray
     crushes it to off, while lowering ``white_point`` lifts muted foregrounds.
     """
     if not 0 <= black_point < white_point <= 255:
@@ -571,7 +571,7 @@ def compute_auto_levels(image: Image.Image, *, cutoff_percent: float = 2.0) -> t
     """Derive (black_point, white_point) that contrast-stretch an image for the panel.
 
     Clips ``cutoff_percent`` of pixels off each end of the per-pixel VALUE (max
-    channel, i.e. HSV V) histogram. Value rather than luminance so coloured
+    channel, i.e. HSV V) histogram. Value rather than luminance so colored
     content on a dark ground -- e.g. green text -- keeps a high white point and
     stays saturated instead of washing toward white. Feed this the SOURCE image
     (before fitting) so ``contain`` letterbox bars do not peg the black point to
@@ -630,14 +630,14 @@ def threshold_to_panel(image: Image.Image, *, threshold: int = 127) -> Image.Ima
 
 
 def quantize_to_panel(image: Image.Image, mode: str = "ordered") -> Image.Image:
-    """Reduce an RGB image to the panel's 8-colour gamut (1 bit per channel).
+    """Reduce an RGB image to the panel's 8-color gamut (1 bit per channel).
 
     The CoolLEDX panel only shows each channel on or off, so continuous-tone
     content must be dithered before the codec's hard ``>127`` threshold or it
     collapses into a few flat bands. Modes:
 
     - ``"ordered"``: Bayer ordered dithering. The threshold depends on pixel
-      position rather than neighbouring error, so stationary regions render
+      position rather than neighboring error, so stationary regions render
       identically every frame (no temporal shimmer). Best default for animation.
     - ``"floyd"``: per-channel Floyd-Steinberg. Best detail on a single still,
       but re-diffuses error each frame, which shimmers on animation.
@@ -708,20 +708,20 @@ def _even_spread_order(n: int) -> list[int]:
 def temporal_dither_frames(
     image: Image.Image, *, subframes: int = 2, order: int = 4
 ) -> list[Image.Image]:
-    """Expand one still into ``subframes`` binarized frames for temporal colour.
+    """Expand one still into ``subframes`` binarized frames for temporal color.
 
     The panel shows each channel only on or off, but if it can advance frames
     faster than the eye's flicker-fusion threshold (measured ~62 Hz on this
     hardware), a fast N-frame loop makes each pixel's *duty cycle* read as an
-    intermediate level: black<->white averages to grey, red<->green to yellow,
+    intermediate level: black<->white averages to gray, red<->green to yellow,
     and so on. This yields ``subframes + 1`` temporal levels per channel, which
-    combined with the spatial Bayer mask below fills in the colours between.
+    combined with the spatial Bayer mask below fills in the colors between.
 
     Implementation is a single spatiotemporal ordered-dither: for subframe
     ``t`` the per-pixel threshold is ``(order_seq[t] + bayer(x, y)) / N``. The
-    Bayer term dithers spatially (so neighbouring pixels round opposite ways),
+    Bayer term dithers spatially (so neighboring pixels round opposite ways),
     while ``order_seq`` from :func:`_even_spread_order` distributes each pixel's
-    on-frames evenly in time to maximise the flicker frequency. Output channels
+    on-frames evenly in time to maximize the flicker frequency. Output channels
     are 0 or 255, so the codec's hard threshold passes them through unchanged.
 
     Caveats worth knowing: duty cycle couples to brightness (a 50% level is

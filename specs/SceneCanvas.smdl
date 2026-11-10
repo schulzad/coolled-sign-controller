@@ -69,7 +69,7 @@ Module("SceneCanvas") {
         parameters: {
           scene_path: { type: "string", description: "The scene file.", required: true },
           revision: { type: "string", description: "The revision the operations were written against: the hash of the file's bytes.", required: true },
-          operations: { type: "array[object]", description: "Add or replace a sprite's rows; remove a sprite; add a placement on top, or before or after a named one; move placements to or by an offset; recolour or mirror a placement; set cells by canvas coordinate; remove placements matching a condition, such as hidden; set or clear a field, such as block_in, on many placements. Each names the placement or the sprite it changes.", required: true },
+          operations: { type: "array[object]", description: "Add or replace a sprite's rows; remove a sprite; add a placement on top, or before or after a named one; move placements to or by an offset; recolor or mirror a placement; set cells by canvas coordinate; remove placements matching a condition, such as hidden; set or clear a field, such as block_in, on many placements. Each names the placement or the sprite it changes.", required: true },
           plan_id: { type: "string", description: "accept: the plan to write.", required: false }
         }
         actions: { plan: "plan_edit", diff: "pixel_diff", accept: "apply_edit" }
@@ -134,7 +134,7 @@ Module("SceneCanvas") {
           canvas: { type: "array[int]", description: "The painter's choice too, as long as its first overview cannot show single pixels: at least 384 on the long side at a 1024 px budget.", required: true },
           records: { type: "string", description: "A directory outside the repository for the scene, the workspace and the records.", required: true }
         }
-        actions: { workspace: "prototype_workspace", paint: "paint_first_drawing" }
+        actions: { workspace: "prototype_workspace", paint: "paint_first_drawing", count: "composition_stats" }
         kernel: "FirstDrawingKernel"
         tags: ["entry", "experiment", "no-product-code"]
       }
@@ -170,14 +170,14 @@ Module("SceneCanvas") {
           frame: { type: "int", description: "Which frame.", required: false, default: 0 }
         }
         output_format: {
-          canvas: "Image — the frame at canvas size, in the legend's 8 colours",
+          canvas: "Image — the frame at canvas size, in the legend's 8 colors",
           raises: "ValueError — when a placement names a sprite the scene lacks, or frame is not one of the scene's frames, naming where"
         }
         implementation: |
           def compose_canvas(scene, size, frame):
               canvas = a black image of size
               for each placement in the scene's items, then in its frame's own list:
-                  stamp its sprite at its at, recoloured and flipped as it says,
+                  stamp its sprite at its at, recolored and flipped as it says,
                   '.' leaving what lies beneath
               return canvas
         tags: ["pure"]
@@ -205,7 +205,7 @@ Module("SceneCanvas") {
       }
 
       Function("look_overview") {
-        description: "The whole canvas in one picture at picture_scale's size: gridlines between pixels from 4 screen pixels up, to count by; a map grid of leaf-sized tiles labelled A1, B1 and so on in the margin, so each tile is one legible region look; the region being worked boxed; and a caption giving the canvas size and the scale, which says so when single pixels are not legible here. The grid, box and labels are drawn in a colour no LED shows, so they never read as paint."
+        description: "The whole canvas in one picture at picture_scale's size: gridlines between pixels from 4 screen pixels up, to count by; a map grid of leaf-sized tiles labeled A1, B1 and so on in the margin, so each tile is one legible region look; the region being worked boxed; and a caption giving the canvas size and the scale, which says so when single pixels are not legible here. The grid, box and labels are drawn in a color no LED shows, so they never read as paint."
         metaphor: "The view from across the street, chalk grid and all."
         input_parameters: {
           canvas: { type: "Image", description: "From compose_canvas.", required: true },
@@ -230,8 +230,8 @@ Module("SceneCanvas") {
       }
 
       Function("look_region") {
-        description: "One region of the composed canvas, as large as the budget allows, with a margin of its surroundings, its own edge marked, and rulers labelled in canvas coordinates, so the numbers in the look are the numbers in the file. Because it crops the composite, whatever shows through a gap in the region is in the look. A region too big to be legible comes back saying so, which is the signal to descend."
-        metaphor: "A frame held up to one square from the scaffold, the neighbouring squares showing round its edge."
+        description: "One region of the composed canvas, as large as the budget allows, with a margin of its surroundings, its own edge marked, and rulers labeled in canvas coordinates, so the numbers in the look are the numbers in the file. Because it crops the composite, whatever shows through a gap in the region is in the look. A region too big to be legible comes back saying so, which is the signal to descend."
+        metaphor: "A frame held up to one square from the scaffold, the neighboring squares showing round its edge."
         input_parameters: {
           canvas: { type: "Image", description: "From compose_canvas.", required: true },
           region: { type: "array[int]", description: "[x, y, width, height] in canvas pixels.", required: true },
@@ -297,8 +297,8 @@ Module("SceneCanvas") {
       }
 
       Function("outline_scene") {
-        description: "The scene as text for one region: a header with the file's revision, the canvas size and counts; one line per placement touching the region, with its index, sprite, box, colours, note and block_in; for each sprite placed there, how many of its copies lie outside the region; and everything else as one line per sprite, with its count and the box round its copies. Rows only on request."
-        metaphor: "The chalk plan of the wall, one square drawn in full and the rest as labelled boxes."
+        description: "The scene as text for one region: a header with the file's revision, the canvas size and counts; one line per placement touching the region, with its index, sprite, box, colors, note and block_in; for each sprite placed there, how many of its copies lie outside the region; and everything else as one line per sprite, with its count and the box round its copies. Rows only on request."
+        metaphor: "The chalk plan of the wall, one square drawn in full and the rest as labeled boxes."
         input_parameters: {
           scene: { type: "object", description: "The scene.", required: true },
           region: { type: "array[int]", description: "[x, y, width, height]; omit for the whole canvas.", required: false },
@@ -311,7 +311,7 @@ Module("SceneCanvas") {
           def outline_scene(scene, region, rows):
               write the file's revision, the canvas size, and how many sprites and placements there are
               for each placement whose box meets region, in draw order:
-                  write its index, sprite, box, colours, note, and block_in when set
+                  write its index, sprite, box, colors, note, and block_in when set
               for each sprite placed in region:
                   write how many of its copies lie outside region, and its rows when rows is set
               for each other sprite:
@@ -341,7 +341,7 @@ Module("SceneCanvas") {
       }
 
       Function("trace_pixel") {
-        description: "Where visible pixels came from: for each pixel asked about, its colour, the placement that shows it, at which cell of that placement's sprite, and every placement beneath it. A pixel seen in a look leads to the exact character in the file that put it there, and to whatever it hides, which is what turns seeing a mistake into knowing its cause. One call takes many pixels, since every question in the first drawing needed three or four, and notes are left out unless asked for, since the painter stripped them from every trace."
+        description: "Where visible pixels came from: for each pixel asked about, its color, the placement that shows it, at which cell of that placement's sprite, and every placement beneath it. A pixel seen in a look leads to the exact character in the file that put it there, and to whatever it hides, which is what turns seeing a mistake into knowing its cause. One call takes many pixels, since every question in the first drawing needed three or four, and notes are left out unless asked for, since the painter stripped them from every trace."
         metaphor: "Scraping down through the layers of paint at a few spots at once."
         input_parameters: {
           scene: { type: "object", description: "The scene.", required: true },
@@ -350,7 +350,7 @@ Module("SceneCanvas") {
           notes: { type: "bool", description: "Include each placement's note.", required: false, default: false }
         }
         output_format: {
-          traces: "list[object] for each pixel, the visible colour; the showing placement's index, sprite, at and sprite cell; and the placements beneath it, top first"
+          traces: "list[object] for each pixel, the visible color; the showing placement's index, sprite, at and sprite cell; and the placements beneath it, top first"
         }
         implementation: |
           def trace_pixel(scene, at, frame, notes):
@@ -423,7 +423,7 @@ Module("SceneCanvas") {
       }
 
       Function("pixel_diff") {
-        description: "What an edit changes on the canvas: every pixel whose colour differs between two composed canvases, grouped into the boxes they fall in, with the placements drawn in each box and a picture of each box before and after. It is how an edit that reaches beyond its region, such as one to a sprite with copies elsewhere, shows itself. It leads with the count and the boxes, which is what the painter read first every time: in the first drawing, 108 pixels changed after painting a storm and nine other overlays was too few, and that count was the first sign the storm had missed its belt."
+        description: "What an edit changes on the canvas: every pixel whose color differs between two composed canvases, grouped into the boxes they fall in, with the placements drawn in each box and a picture of each box before and after. It is how an edit that reaches beyond its region, such as one to a sprite with copies elsewhere, shows itself. It leads with the count and the boxes, which is what the painter read first every time: in the first drawing, 108 pixels changed after painting a storm and nine other overlays was too few, and that count was the first sign the storm had missed its belt."
         metaphor: "Laying the tracing over the wall and seeing everywhere it differs."
         input_parameters: {
           before: { type: "Image", description: "The canvas before the edit.", required: true },
@@ -434,7 +434,7 @@ Module("SceneCanvas") {
         }
         implementation: |
           def pixel_diff(before, after):
-              changed = every pixel whose colour differs between before and after
+              changed = every pixel whose color differs between before and after
               group the changed pixels into boxes, near ones together
               list the placements drawn in each box, from owner_map, so the overlays a change reaches are named
               picture each box before and after, side by side, as look_region would show it
@@ -464,7 +464,7 @@ Module("SceneCanvas") {
       }
 
       Function("fit_still") {
-        description: "A panel-sized window of the canvas as one still for PixelFramePipeline to bundle, or as one frame of a scene with frames. A canvas the panel's size fits whole, which is today's path, byte for byte; a smaller one fits centred, as a drawing does."
+        description: "A panel-sized window of the canvas as one still for PixelFramePipeline to bundle, or as one frame of a scene with frames. A canvas the panel's size fits whole, which is today's path, byte for byte; a smaller one fits centered, as a drawing does."
         metaphor: "The one view through the window that never moves."
         input_parameters: {
           canvas: { type: "Image", description: "From compose_canvas.", required: true },
@@ -478,7 +478,7 @@ Module("SceneCanvas") {
         implementation: |
           def fit_still(canvas, panel, at):
               if the canvas is the panel's size: return the canvas
-              if the canvas is no bigger than the panel either way: return it centred on a black panel
+              if the canvas is no bigger than the panel either way: return it centered on a black panel
               refuse when the window at at leaves the canvas
               return the panel-sized window at at
         tags: ["fit"]
@@ -566,7 +566,7 @@ Module("SceneCanvas") {
           def bake_brush(brush, settings, size, seed):
               shape: a pie, circle, rectangle or line in one letter, without antialiasing, as card F10 describes them
               scatter: single pixels at places drawn from seed, at the settings' density and letters, for stars, snow or sand
-              dither: an ordered-dither ramp between two legend colours across size, for a dawn sky or deep water
+              dither: an ordered-dither ramp between two legend colors across size, for a dawn sky or deep water
               pattern: the rows of a sprite from another scene file, copied exactly, never referenced
               each of them is a paint function handed to bake_layer
               return the rows, and a note giving the brush's name, version, seed and settings
@@ -663,7 +663,7 @@ Module("SceneCanvas") {
         implementation: |
           def prototype_workspace(records, budget_px):
               write a small script in records that reads a scene file and composes it with compile_scene at its own size
-              overview: the whole at the largest scale that fits budget_px, with labelled leaf-sized tiles
+              overview: the whole at the largest scale that fits budget_px, with labeled leaf-sized tiles
               region: a crop with its margin, edge and rulers, at the largest scale that fits
               trace: the placements under one pixel, top first, with the sprite cell each puts there
               hidden: the placements that show nowhere
@@ -699,6 +699,30 @@ Module("SceneCanvas") {
                   what the workspace lacked, and how much of the scene file had to be read at once
               return the scene and the files
         tags: ["experiment", "agent"]
+      }
+
+      Function("composition_stats") {
+        description: "The same numbers for every composition, so pieces can be compared: the canvas and picture (size, frames, colors, lit share), the scene (bytes, sprites, placements, characters), provenance (the lit share baked against hand-painted, read from brush notes), the records when the piece keeps them (looks by view and scale, versions, logged changes, traces), and the session when its transcript is given (tool calls by tool, pictures read, generated characters and estimated tokens, picture tokens, minutes). scripts/composition_stats.py computes it, writes stats.json beside the scene, and prints one table across several scenes."
+        metaphor: "The gallery's ledger: the same columns filled in for every wall."
+        input_parameters: {
+          scene: { type: "string", description: "The scene file.", required: true },
+          transcript: { type: "string", description: "The painter's agent transcript, when the session should be counted.", required: false },
+          session_start: { type: "string", description: "Text from the user message that started the session.", required: false }
+        }
+        output_format: {
+          stats: "object stats_version, piece, canvas, frames, picture and scene, with provenance, records and session where there is something to read them from"
+        }
+        implementation: |
+          def composition_stats(scene, transcript, session_start):
+              compose the scene at its own size and count its canvas, frames, colors and lit pixels
+              count its sprites, placements and characters, and split the lit pixels by whether a brush note claims their sprite
+              when the scene sits in a composition folder, read its log for looks by view and scale, changes and traces,
+                  and count its versions
+              when a transcript is given, take the turns from session_start to the next user message: tool calls by tool,
+                  pictures read, characters generated at about 4 to a token, pictures at width times height over 750 tokens,
+                  and the minutes from that message's timestamp to the session's end
+              return the stats
+        tags: ["experiment", "stats"]
       }
     }
 
@@ -804,7 +828,8 @@ Module("SceneCanvas") {
         links: [
           { source: "/first_drawing", target: "prototype_workspace", description: "Overview, region, trace, hidden and diff, outside the repo." },
           { source: "prototype_workspace", target: "paint_first_drawing", description: "The session: plan, paint, log, account." },
-          { source: "paint_first_drawing", target: "paint_region", description: "The loop, run for real." }
+          { source: "paint_first_drawing", target: "paint_region", description: "The loop, run for real." },
+          { source: "paint_first_drawing", target: "composition_stats", description: "Count the piece the way every piece is counted." }
         ]
         tags: ["pipe", "experiment"]
       }
@@ -819,7 +844,7 @@ Module("SceneCanvas") {
           "DESIGN ONLY: Nothing in this module is built. Its Functions graduate when the code lands: compose and fit into PixelFramePipeline, and the looks, inspection and edits into the coolled-verbs server, which has no layer spec yet.",
           "THE CANVAS IS NOT THE PANEL: A scene composes at its own size, and compose, the looks and inspection never consult a panel's geometry, palette threshold, upload budget or preview scale, so no look refuses a canvas for being too big to send.",
           "ONE DOOR TO THE PANEL: plan and accept see a canvas only through fit, and the panel preview is a look at fit's output, so what the preview shows and what a send writes cannot disagree.",
-          "LITERAL PIXELS: Every lit pixel of a composed frame traces to one character of one sprite row. A placement may move, flip or recolour a sprite and a frame may show it, but nothing in a scene file computes pixels. A generator may propose pixels; once accepted, they belong to the artwork, not the generator.",
+          "LITERAL PIXELS: Every lit pixel of a composed frame traces to one character of one sprite row. A placement may move, flip or recolor a sprite and a frame may show it, but nothing in a scene file computes pixels. A generator may propose pixels; once accepted, they belong to the artwork, not the generator.",
           "THE FILE IS THE ARTWORK: The scene file is the only state. A revision is the hash of its bytes, no server keeps a copy that matters, and a painter without the workspace can still edit the file by hand, which the next revision check notices.",
           "SCENES KEEP THEIR BYTES: A scene that names no size composes on the panel's canvas and fits whole, and compose ignores notes, note and block_in, so every scene written so far compiles to exactly its current packets and plan_id.",
           "A LOOK STATES ITS SCALE: Every picture is sized to the viewer's budget and says how many screen pixels each canvas pixel got and whether that is legible for this viewer. Rulers, grids and boxes are in canvas pixels, the numbers the file uses.",
@@ -843,7 +868,8 @@ Module("SceneCanvas") {
           "NO OTHER AGENTS YET: One painter, this agent, and the user as the judge. Fresh reviewers and comparisons wait until there is a workspace worth comparing.",
           "EVERY LOOK LOGGED: Each look's view and scale, what it showed and what it prompted are written down before the next look.",
           "BRUSHES BAKE: Any brush leaves rows in a new sprite with a note naming it, and the log says what was baked and what was painted by hand.",
-          "ONE DRAWING IS AN ANECDOTE: It says which workspace pieces to build first, not that the loop works."
+          "ONE DRAWING IS AN ANECDOTE: It says which workspace pieces to build first, not that the loop works.",
+          "EVERY PIECE COUNTED: Each composition leaves stats.json beside its scene, computed the same way by scripts/composition_stats.py, so pieces can be compared, and every estimate in it says it is one."
         ]
         tags: ["governance", "experiment"]
       }
@@ -883,7 +909,7 @@ Module("SceneCanvas") {
       - Scale: a look takes the largest whole scale at which its area fits the budget, up to 16.
       - Legible: legible_px, the smallest scale at which a viewer still reads single pixels, belongs to the viewer and is measured, not assumed. The probe bracketed it between 2 and 8; the first drawing measured it for this agent: single pixels and dither patterns read cleanly at 4 px and not at 2, so legible_px is 3 or 4.
       - Leaf: a region is a leaf when its look is legible, so the leaf size is budget_px divided by legible_px, 256 pixels at 4 and 128 at 8. The overview's map grid uses that size, so each tile is one legible region look. The grid is a map, not the unit of work: of the first drawing's 17 region looks, 9 were tiles, taken to survey, and 8 were rectangles drawn round one subject (the lander, the trail, the storm's belt), taken to work.
-      - Gridlines from 4 px up are a counting aid, not an imitation of LEDs, and rulers are labelled in canvas coordinates.
+      - Gridlines from 4 px up are a counting aid, not an imitation of LEDs, and rulers are labeled in canvas coordinates.
       - Text grids follow FeatureBoard card F9: none beside a picture unless asked. One 512x16 frame is 8,207 characters.
     time: |
       A canvas the panel scrolls or pans is also a sequence, hundreds of windows for a 512x16 banner, so it has two compositions: the whole as a picture, and the windows in the order they pass. A narrow gap that looks fine in the overview can leave a stretch of near-dark as it passes, and a panorama that is seamless as a picture need not be seamless as a loop. look_windows shows the sequence, the loop point and how lit each window is. It never replaces the overview; the local and the global have to inform each other.
@@ -898,15 +924,15 @@ Module("SceneCanvas") {
       Fit is where the panel's facts apply:
       - still: a panel-sized window of the canvas, sent as 0x03, or as 0x04 for a scene with frames. A canvas the panel's size fits whole, which is today's path.
       - banner: a canvas exactly the panel's height, scrolled by the panel's own firmware (0x02): smooth, a still, and no frame budget. A 512x16 canvas is 3,179 B in 25 packets, about 6 s to upload. The ceiling is about 5,100 columns if the 30 KiB limit governs 0x02 too.
-      - pan: a window travelling a path, played as 0x04 within 79 frames at 64x16, each frame composing the scene's frame for its moment so a scene can animate as the window moves. A 64x128 canvas tilted top to bottom at 2 px per frame is 57 frames; panning 512 columns at 2 px is 225, and is refused.
+      - pan: a window traveling a path, played as 0x04 within 79 frames at 64x16, each frame composing the scene's frame for its moment so a scene can animate as the window moves. A 64x128 canvas tilted top to bottom at 2 px per frame is 57 frames; panning 512 columns at 2 px is 225, and is refused.
       A square canvas reaches this panel only as a pan or as chosen windows, so it is painted for itself first and fitted after.
     brushes: |
       A generator may propose pixels, but once accepted they belong to the artwork, not the generator. A brush proposes rows, plan_edit shows them in place with their pixel diff, and apply_edit adds them as a new sprite and placement, only ever adding. The placement's note keeps the brush's name, version, seed and settings, which nothing needs to render but which tell the next painter where a shape came from.
-      The first brushes: shapes (card F10's pie, circle, rectangle and line), seeded scatter (stars, snow, sand), ordered-dither ramps between two legend colours (a dawn sky, deep water), and exact patterns harvested from finished scenes, which arrive as copies. Pattern synthesis such as wave function collapse can come later, as one more texture brush invoked on purpose: it reproduces local neighbourhoods, not the intent of a composition, which is the staggered-windows objection again even when the rule is learned from an example. A split grammar for buildings would be another, laying down a starting texture rather than the result.
+      The first brushes: shapes (card F10's pie, circle, rectangle and line), seeded scatter (stars, snow, sand), ordered-dither ramps between two legend colors (a dawn sky, deep water), and exact patterns harvested from finished scenes, which arrive as copies. Pattern synthesis such as wave function collapse can come later, as one more texture brush invoked on purpose: it reproduces local neighborhoods, not the intent of a composition, which is the staggered-windows objection again even when the rule is learned from an example. A split grammar for buildings would be another, laying down a starting texture rather than the result.
       In the first drawing re-baking a block-in where it stood (rebake_layer) was used more than adding, and safe only because nothing had been painted on top yet: an overlay is pinned to canvas pixels, so re-baking the planet with a new tilt would have left the storm floating off its belt. Finding what to regenerate is easy, since the notes name the brush and its settings; keeping the hand work attached is the hard part, and naming the overlays in the diff is the first answer. Baked rows were never edited by hand: the planet's rows are 225 characters wide, so the painter painted small sprites over them, and those overlays were the easiest things in the piece to move.
     recursion: |
       Recursion lives in four places, and only the first ever touches the file:
-      - Composition: groups of sprites and groups, cut-outs of cut-outs, once a scene needs to move or recolour a cluster as one. Not yet.
+      - Composition: groups of sprites and groups, cut-outs of cut-outs, once a scene needs to move or recolor a cluster as one. Not yet.
       - Generation: brushes, outside the file, proposing rows a painter accepts.
       - Attention: the descent, a painter's loop over regions of the canvas.
       - Time: a scrolling or panning piece as a sequence of windows, judged as a sequence.
@@ -923,7 +949,7 @@ Module("SceneCanvas") {
       - Why regions at all: one look at a 512x16 strip found one of three planted defects, and the same strip in eight panel-sized windows found all three (evidence_basis).
     patterns: |
       What the first drawing's scripts kept doing, which the next pieces will need again:
-      - One world model, shared: the planet's centre, the ring plane and the sun as a handful of constants every brush reads, so every shadow agrees and moving the sun is one line and a re-bake.
+      - One world model, shared: the planet's center, the ring plane and the sun as a handful of constants every brush reads, so every shadow agrees and moving the sun is one line and a re-bake.
       - A brush is a function from a canvas pixel to a character, evaluated over a box and trimmed (bake_layer).
       - Dither anchored to the canvas: an ordered pattern keyed to canvas coordinates for smooth ramps (the terminator, the lamp pool), so layers line up; seeded grain for texture (the regolith), so nothing looks like a printer's screen.
       - Depth by splitting at an occluder: the rings as a back half and a front half around the planet, the night side and every shadow as layers of their own above what they darken.
@@ -959,8 +985,8 @@ Module("SceneCanvas") {
       The first experiment needs no other agents: the user asks this agent to paint a scene of its choice, and judges it.
       - Canvas: the painter's choice, large enough that its first overview cannot show single pixels. At a 1024 px budget that is at least 384 on the long side, where the overview falls to 2 px per pixel and the probe's single-pixel defects went unseen. If the first overview reads every pixel, the canvas is too small, so go bigger.
       - Workspace: a throwaway prototype outside the repo (prototype_workspace) with an overview in leaf-sized tiles, region looks, pixel trace, hidden placements and a diff between saved versions. Edits are the painter's own file edits, and brushes, if any, bake rows with notes.
-      - Records, outside the repo: plan.txt before the first look; log.txt after every look; the scene file; account.txt.
-      - What to read from it: the user's judgement of the piece as a whole and up close. From the log: what region looks caught that the overview did not, what was seen but not understood until traced, which seams needed mending, and how much of the scene file had to be read at once. From the account: the smallest scale at which single pixels still read, the first reading of legible_px.
+      - Records, outside the repo: plan.txt before the first look; log.txt after every look; the scene file; account.txt; and, kept with the piece, stats.json from composition_stats.
+      - What to read from it: the user's judgment of the piece as a whole and up close. From the log: what region looks caught that the overview did not, what was seen but not understood until traced, which seams needed mending, and how much of the scene file had to be read at once. From the account: the smallest scale at which single pixels still read, the first reading of legible_px.
       - What it decides: which workspace pieces to build first in coolled-verbs (size, overview and region, trace, checked edits), with cards F9 and F12.
       - The piece can reach the panel today as a tour: up to 79 panel windows along a path, composed by the workspace, saved as a frame bundle and sent with plan bundle and accept, with no product code.
       Ran on 2026-10-31 and kept in examples/canvas/ringed-planet with its tools and records: the view from a small moon, a ringed gas giant rising over its horizon, 384x384, 257 placements of 34 sprites, in 25 looks (8 of the whole, 17 of regions). What it found:
@@ -974,12 +1000,19 @@ Module("SceneCanvas") {
       - Three conditions on the same planted defects: the whole only; overview and overlapping windows; overview, windows, trace and checked edits. Measure detection, correct diagnosis, successful repairs, unintended changes, tool calls and tokens, over several defect placements and reviewers.
       - Continuation: a different model improves one region of a finished piece from the file, its notes and the workspace alone, and the whole is judged for coherence.
       - Calibration: the picture budget and legible_px measured with fresh agents on pictures of known detail, instead of self-reported.
+    stats: |
+      Every composition is counted the same way (composition_stats), so the gallery can be compared across pieces and, later, across painters and workspaces.
+      - Read from the scene, by anyone: canvas, frames, colors, lit share, sprites, placements, characters, bytes, and the lit share brushes baked. A sprite counts as baked when a note on it or on one of its placements says "baked by", so the ringed planet's scattered stars, hand-written sprites placed by a brush, count as hand.
+      - Read from the composition folder: looks by view and scale, versions, logged changes, traces.
+      - Read from the agent transcript: tool calls by tool, pictures read, characters generated, and minutes. The transcript keeps every tool call with its arguments and the agent's messages with their recorded reasoning, but no time on each call, so minutes run from the starting message's timestamp to the end of the session.
+      - Estimated, and labeled so: generated tokens at about 4 characters each, and picture tokens at width times height over 750. Input tokens, the context re-read on every call and the larger cost, cannot be read from the transcript at all.
+      The first reading, the ringed planet: 28 minutes, 89 tool calls (33 text edits, 25 pictures read, 23 shell commands, 6 files written), about 46,000 generated tokens and 24,000 picture tokens, 25 looks, 12 versions, 19 logged changes. Across the gallery, the 64x16 pieces run 6 to 12 sprites, 19 to 57 placements and 283 to 504 characters; the ringed planet is 144 panels of canvas, 34 sprites, 257 placements and 219,896 characters, 1,483 of them typed by hand, and it never lights green.
     relation_to_feature_board: |
       - F9 (lean results) and F12 (scene files) come first: at canvas sizes, text grids and re-sent scenes are the cost. The 512x16 probe scene was 8,063 characters, re-sent with every inline render.
       - F10 changes shape: as written, a pie is a placement drawn at compile time, which breaks LITERAL PIXELS and would freeze its rasterizer into every saved scene's bytes. Here it is a brush that bakes a sprite.
       - F11 becomes a fit: the pan that enters one edge and leaves the other.
       - F6, F7, F8 and F13 keep their shape: they say where, when and which way round, never what.
-      - F13's K already works today, as a letter outside the legend recoloured black: the first drawing used it for the night side, the ground and every shadow. What the card adds is making it the default.
+      - F13's K already works today, as a letter outside the legend recolored black: the first drawing used it for the night side, the ground and every shadow. What the card adds is making it the default.
     evidence_basis: |
       - 2026-10-30 probe, run outside the repo: the night skyline tiled eight times into a 512x16 scene of 153 placements, with three planted defects (a building floating 3 px up, a moon shaped like a C, a one-pixel slit down a tower). A fresh agent shown the whole strip as one picture, 4096x128 at 8 px per pixel, which reached it at about 2 px per pixel, found one and sensed a second. A fresh agent shown the same strip as eight 64-column windows found all three at the right columns and called the piece tiled, but described the floating building as a taller one: it saw the defect without diagnosing it.
       - The same scene was 8,063 characters of JSON and 8,207 characters of text grid per frame; as an 0x02 banner it is 3,179 B in 25 packets, about 6 s at the panel's measured 0.236 s per packet.
@@ -992,9 +1025,9 @@ Module("SceneCanvas") {
       - Does the journal belong to the server's session, or in the scene's folder beside its log, where the next painter would find it?
       - Which files may plan edit write? accept's --execute gate is about the radio, so edits need a gate of their own, such as one workspace directory.
       - Where does undo live: inverses kept by the server, which forgets them on restart, or the file's own history in git?
-      - Should a canvas meant for another display get its own palette, or stay in the panel's 8-colour legend, which is what keeps rows readable?
+      - Should a canvas meant for another display get its own palette, or stay in the panel's 8-color legend, which is what keeps rows readable?
       - Does the panel's own scroll join a banner's last column to its first, or leave a gap? look_windows assumes it joins.
-      - Should a region look's margin show its colours plainly behind a marked edge, as designed, or dimmed, which the 8-colour legend makes ambiguous?
+      - Should a region look's margin show its colors plainly behind a marked edge, as designed, or dimmed, which the 8-color legend makes ambiguous?
     provenance: |
       - Came out of the agent-drawing session and the follow-up on groups and harvesting (2026-10-30): painting coarse to fine like a painter, recursion in the loop rather than the file, generators kept outside the file as brushes, names local to each scene, and shared things arriving as copies.
       - The 512x16 probe the same night measured where one look stops working, and the split into compose, workspace and fit followed from it.

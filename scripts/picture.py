@@ -6,7 +6,7 @@ looks at a drawing before sending it: write it, render the picture, look, fix.
 
 SOURCE is a scene file (.json, as in examples/scenes, which may carry its own frame_ms)
 or a drawing (any other file): frames written one character per pixel, '.' off, '#'
-the foreground, R G B C M Y W a colour, and a blank line between frames. A mistake is
+the foreground, R G B C M Y W a color, and a blank line between frames. A mistake is
 reported by where it is, such as "frame 1: row 2 is 63 wide but row 1 is 64".
 
 Usage:
@@ -33,7 +33,7 @@ def main() -> None:
     parser.add_argument("--scale", type=int, default=8, help="Pixels each LED is drawn (default 8).")
     parser.add_argument("--width", type=int, default=64)
     parser.add_argument("--height", type=int, default=16)
-    parser.add_argument("--foreground", default="white", help="The colour '#' lights in a drawing.")
+    parser.add_argument("--foreground", default="white", help="The color '#' lights in a drawing.")
     parser.add_argument("--frame-ms", type=int, default=200, help="Hold per frame when the source names none.")
     args = parser.parse_args()
     budget = PIXEL_BYTES_MAX // (args.width * args.height * 3 // 8)
