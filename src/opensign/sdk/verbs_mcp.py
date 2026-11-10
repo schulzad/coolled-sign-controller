@@ -88,18 +88,18 @@ mcp = FastMCP(
     "coolled-verbs",
     instructions=(
         "A render and send surface for a CoolLEDX LED panel. Call a verb with no noun "
-        "to see its nouns and their arguments. describe panel gives the geometry and "
-        "colors; render compiles text, a drawing, a scene, a pattern, an image, an "
-        "animation or a frame bundle exactly as the panel would show it, and returns "
-        "each frame as a picture and as text, one character per pixel: '.' is off, and "
-        "either '#' marks a lit pixel (mono) or a letter names its color (describe "
-        "legend). The draw noun reads whole frames written that way; the scene noun "
-        "places small sprites written that way at x,y, which is easier to get right "
-        "than whole frames, and lets a sprite move, cycle and flip from frame to frame "
-        "without writing each frame out. plan compiles content into the packets a send "
-        "would write, without sending, and returns a plan_id; accept sends a plan_id, "
-        "and only when the server was started with --execute (describe panel says "
-        "whether it was). Every path must be absolute."
+        "to see its nouns and their arguments. describe panel gives the geometry, the "
+        "colors and how many frames one upload holds; render compiles text, a drawing, "
+        "a scene, a pattern, an image, an animation or a frame bundle exactly as the "
+        "panel would show it, and returns each frame as a picture and as text, one "
+        "character per pixel: '.' is off, and either '#' marks a lit pixel (mono) or a "
+        "letter names its color (describe legend). The draw noun reads whole frames "
+        "written that way; the scene noun places small sprites written that way at x,y, "
+        "which is easier to get right than whole frames, and lets a sprite move, cycle "
+        "and flip from frame to frame without writing each frame out. plan compiles "
+        "content into the packets a send would write, without sending, and returns a "
+        "plan_id; accept sends a plan_id, and only when the server was started with "
+        "--execute (describe panel says whether it was). Every path must be absolute."
     ),
 )
 
@@ -146,7 +146,7 @@ PLAN_DEFAULTS: dict[str, Any] = {
 NOUNS: dict[str, dict[str, tuple[str, str]]] = {
     "describe": {
         "panel": ("", "the panel's id, geometry, color mode, capability statuses, "
-                      "and whether accept sends"),
+                      "how many frames one upload holds, and whether accept sends"),
         "legend": ("", "the character each panel color renders as, which draw reads back"),
         "upload": ("", "the upload accept started last: its progress, then how it ended"),
     },
@@ -425,6 +425,8 @@ def describe(
             "scene": "sprites use them too, but '.' is transparent, 'K' paints off over "
                      "whatever lies beneath, and any other letter takes the color its "
                      "placement gives it",
+            "rows": "spaces around a row are ignored, so pad with '.', and every row of a "
+                    "frame or a sprite must be as wide as the first",
         }
     if noun == "upload":
         if _upload is None:
@@ -440,6 +442,7 @@ def describe(
         "height": profile.height,
         "colors": 8,
         "capabilities": profile.get("capabilities", {}),
+        "frames_per_upload": _frame_budget(profile),
         "accept_sends": _execute,
     }
 

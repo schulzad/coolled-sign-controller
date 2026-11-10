@@ -140,6 +140,24 @@ def test_describe_panel_reads_the_profile() -> None:
     assert set(tool("describe")(noun="legend")["color"]) == set(".RGBCMYW")
 
 
+def test_describe_panel_says_how_many_frames_one_upload_holds() -> None:
+    budget = tool("describe")(noun="panel")["frames_per_upload"]
+    assert budget == 79
+    dot = {"sprites": {"dot": ["W"]}, "items": [{"sprite": "dot", "at": [0, 0]}]}
+    assert render(noun="scene", scene={**dot, "length": budget})["frame_count"] == budget
+    over = tool("render")(noun="scene", scene={**dot, "length": budget + 1})
+    assert f"the {budget} one upload holds" in error(over)["error"]
+
+
+def test_describe_legend_says_spaces_do_not_pad_a_row() -> None:
+    assert "pad with '.'" in tool("describe")(noun="legend")["rows"]
+    spaced = {"sprites": {"ring": ["W.W", " W "]}, "items": [{"sprite": "ring", "at": [0, 0]}]}
+    refused = error(tool("render")(noun="scene", scene=spaced))["error"]
+    assert "row 2 is 1 wide but row 1 is 3" in refused
+    dotted = {"sprites": {"ring": ["W.W", ".W."]}, "items": [{"sprite": "ring", "at": [0, 0]}]}
+    assert render(noun="scene", scene=dotted)["frame_count"] == 1
+
+
 def test_render_text_matches_the_compiled_bundle() -> None:
     out = render(noun="text", value="HELLO")
     assert (out["width"], out["height"], out["frame_count"]) == (64, 16, 1)
