@@ -1,0 +1,393 @@
+{
+  "frame_ms": 420,
+  "notes": {
+    "window": "One frame and no mullion. Everything unlit inside it is the night.",
+    "flame": "Tall, then mid, then low, and back. One dark row stays between the flame and the wick in every frame, so the two never become one light.",
+    "star": "The star nearest the flame goes out while the flame is low.",
+    "sill": "The bottom of the frame. It takes a little yellow only while the flame is tall."
+  },
+  "sprites": {
+    "wall": [
+      "..WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..W..........................................................W..",
+      "..WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW.."
+    ],
+    "star": [
+      "W"
+    ],
+    "dim": [
+      "B"
+    ],
+    "glow": [
+      "YY"
+    ],
+    "tall": [
+      "...W...",
+      "..WYW..",
+      ".WYYYW.",
+      ".......",
+      "...R...",
+      "..WWW..",
+      ".WWWWW.",
+      ".WWYWW.",
+      ".WWWWW.",
+      ".WWWWW.",
+      ".WWWWW.",
+      ".RRRRR.",
+      "WWWWWWW"
+    ],
+    "mid": [
+      ".......",
+      "...W...",
+      "..WYW..",
+      ".......",
+      "...R...",
+      "..WWW..",
+      ".WWWWW.",
+      ".WWYWW.",
+      ".WWWWW.",
+      ".WWWWW.",
+      ".WWWWW.",
+      ".RRRRR.",
+      "WWWWWWW"
+    ],
+    "low": [
+      ".......",
+      ".......",
+      "...Y...",
+      ".......",
+      "...R...",
+      "..WWW..",
+      ".WWWWW.",
+      ".WWYWW.",
+      ".WWWWW.",
+      ".WWWWW.",
+      ".WWWWW.",
+      ".RRRRR.",
+      "WWWWWWW"
+    ]
+  },
+  "items": [],
+  "frames": [
+    [
+      {
+        "sprite": "wall",
+        "at": [
+          0,
+          0
+        ]
+      },
+      {
+        "sprite": "tall",
+        "at": [
+          40,
+          2
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          7,
+          3
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          15,
+          6
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          11,
+          10
+        ]
+      },
+      {
+        "sprite": "dim",
+        "at": [
+          24,
+          8
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          20,
+          4
+        ]
+      },
+      {
+        "sprite": "glow",
+        "at": [
+          42,
+          15
+        ]
+      }
+    ],
+    [
+      {
+        "sprite": "wall",
+        "at": [
+          0,
+          0
+        ]
+      },
+      {
+        "sprite": "tall",
+        "at": [
+          40,
+          2
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          7,
+          3
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          15,
+          6
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          11,
+          10
+        ]
+      },
+      {
+        "sprite": "dim",
+        "at": [
+          24,
+          8
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          20,
+          4
+        ]
+      },
+      {
+        "sprite": "glow",
+        "at": [
+          42,
+          15
+        ]
+      }
+    ],
+    [
+      {
+        "sprite": "wall",
+        "at": [
+          0,
+          0
+        ]
+      },
+      {
+        "sprite": "mid",
+        "at": [
+          40,
+          2
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          7,
+          3
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          15,
+          6
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          11,
+          10
+        ]
+      },
+      {
+        "sprite": "dim",
+        "at": [
+          24,
+          8
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          20,
+          4
+        ]
+      }
+    ],
+    [
+      {
+        "sprite": "wall",
+        "at": [
+          0,
+          0
+        ]
+      },
+      {
+        "sprite": "low",
+        "at": [
+          40,
+          2
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          7,
+          3
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          15,
+          6
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          11,
+          10
+        ]
+      },
+      {
+        "sprite": "dim",
+        "at": [
+          24,
+          8
+        ]
+      }
+    ],
+    [
+      {
+        "sprite": "wall",
+        "at": [
+          0,
+          0
+        ]
+      },
+      {
+        "sprite": "low",
+        "at": [
+          40,
+          2
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          7,
+          3
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          15,
+          6
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          11,
+          10
+        ]
+      },
+      {
+        "sprite": "dim",
+        "at": [
+          24,
+          8
+        ]
+      }
+    ],
+    [
+      {
+        "sprite": "wall",
+        "at": [
+          0,
+          0
+        ]
+      },
+      {
+        "sprite": "mid",
+        "at": [
+          40,
+          2
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          7,
+          3
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          15,
+          6
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          11,
+          10
+        ]
+      },
+      {
+        "sprite": "dim",
+        "at": [
+          24,
+          8
+        ]
+      },
+      {
+        "sprite": "star",
+        "at": [
+          20,
+          4
+        ]
+      }
+    ]
+  ],
+  "length": 6
+}
