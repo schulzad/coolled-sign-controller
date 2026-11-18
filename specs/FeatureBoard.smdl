@@ -127,18 +127,6 @@ Module("FeatureBoard") {
         tags: ["card:F11", "status:proposed", "scene"]
       }
 
-      Directive("/scene_files") {
-        description: "Card F12. Scene files everywhere: a scene saved as JSON, which may carry its own frame_ms, plays from coolled scene FILE and from the MCP server's scene noun by path, compiling to the same packets and plan_id as the same scene passed inline."
-        metaphor: "Filing the template in the drawer so anyone can hang the same outline again."
-        parameters: {
-          path: { type: "string", description: "The scene file.", required: true },
-          preview: { type: "string", description: "coolled scene only: write a preview to this path instead of sending.", required: false }
-        }
-        actions: { load: "load_scene_file" }
-        kernel: "FeatureBoardKernel"
-        tags: ["card:F12", "status:ready", "scene", "cli"]
-      }
-
       Directive("/layout_results") {
         description: "Card F14. Layout beside the picture: render and plan return each frame's layout as JSON, so an agent reads exact positions instead of counting through a text grid. A scene's layout comes from the compositor: each placement's origin, sprite, position, size and how many of its pixels show, after its cycle, motion and wrap. Any other noun is detected: the connected patches of each color, with their boxes and sizes, and a dither's speckle counted per color instead of listed."
         metaphor: "Tagging every tool on the wall with its hook number, instead of handing over a photo and a tape measure."
@@ -149,17 +137,6 @@ Module("FeatureBoard") {
         actions: { place: "scene_layout", detect: "color_patches" }
         kernel: "FeatureBoardKernel"
         tags: ["card:F14", "status:proposed", "mcp:coolled-verbs", "scene"]
-      }
-
-      Directive("/frame_selection") {
-        description: "Card F15. Choose the frames a result shows: frame takes a list (\"frame\": \"0,8,16,24,32\") as well as N, N-M and all, on plan as well as render, and with no frame named both spread their frames evenly across the loop instead of showing its first eight, each frame in the picture labeled with its index."
-        metaphor: "Photographing one tool from each section of the pegboard, instead of the first eight hooks by the door."
-        parameters: {
-          frame: { type: "string", description: "N, N-M, all, or a comma-separated list of N and N-M; omit for frames spread across the loop.", required: false }
-        }
-        actions: { pick: "select_frames", spread: "sample_frames" }
-        kernel: "FeatureBoardKernel"
-        tags: ["card:F15", "status:ready", "mcp:coolled-verbs"]
       }
 
       Directive("/scroll_text_parity") {
@@ -518,26 +495,6 @@ Module("FeatureBoard") {
         tags: ["budget"]
       }
 
-      Function("load_scene_file") {
-        description: "Read a scene file and check it the way the scene noun checks an inline scene, taking frame_ms from the file when it carries one."
-        metaphor: "Taking the template from its drawer and checking it is the one on the label."
-        input_parameters: {
-          path: { type: "string", description: "The scene file, JSON.", required: true },
-          frame_ms: { type: "int", description: "The hold to use when the file names none.", required: false, default: 200 }
-        }
-        output_format: {
-          scene: "object The scene, checked.",
-          frame_ms: "int The hold each frame shows.",
-          raises: "ValueError — when the file is not a scene, naming what is wrong and where."
-        }
-        implementation: |
-          def load_scene_file(path, frame_ms):
-              scene = the JSON in path
-              check scene as the scene noun checks an inline one
-              return scene, and the file's frame_ms when it has one, else frame_ms
-        tags: ["io", "cli", "mcp"]
-      }
-
       Function("scene_layout") {
         description: "Where every placement of a scene lands in one frame, read from the compositor rather than detected: each placement's origin, sprite, position and size after its cycle, motion and wrap, and how many of its pixels show on top in that frame, so 0 means buried under later paint or off the panel."
         metaphor: "Reading each tool's hook number off the board."
@@ -575,44 +532,6 @@ Module("FeatureBoard") {
                   list those of at least min_patch pixels with their box and size
                   count the rest as that color's speckle
               return the listed patches largest first, then the speckle counts
-        tags: ["pure", "mcp"]
-      }
-
-      Function("select_frames") {
-        description: "The frames a render or plan result shows: the ones frame names, as N, N-M, all, or a comma-separated list of those, in the order given and at most eight, or sample_frames's spread when frame names none."
-        metaphor: "Reading the hook numbers off the order slip."
-        input_parameters: {
-          frame: { type: "string", description: "N, N-M, all, or a comma-separated list of N and N-M; empty for the spread.", required: false, default: "" },
-          frame_count: { type: "int", description: "Frames in the bundle.", required: true },
-          limit: { type: "int", description: "The most frames one result returns.", required: false, default: 8 }
-        }
-        output_format: {
-          frames: "list[int] the frame indexes, in the order asked",
-          raises: "ValueError — when an index is outside the bundle or more than limit frames are named, saying which"
-        }
-        implementation: |
-          def select_frames(frame, frame_count, limit):
-              if frame is empty: return sample_frames(frame_count, limit)
-              indexes = every comma-separated part read as N, N-M or all and expanded, in the order given
-              refuse an index outside 0 to frame_count - 1, or more than limit of them, saying which
-              return indexes
-        tags: ["pure", "mcp"]
-      }
-
-      Function("sample_frames") {
-        description: "Frames spread evenly across a loop, the first always among them, so a result that names no frame shows every part of a long loop rather than its opening: eight of a 40-frame loop are 0, 5, 10, 15, 20, 25, 30 and 35."
-        metaphor: "One photo from each section of the wall."
-        input_parameters: {
-          frame_count: { type: "int", description: "Frames in the bundle.", required: true },
-          limit: { type: "int", description: "How many to show.", required: false, default: 8 }
-        }
-        output_format: {
-          frames: "list[int] the indexes, ascending"
-        }
-        implementation: |
-          def sample_frames(frame_count, limit):
-              if frame_count <= limit: return every index, as today
-              return i * frame_count // limit for each i below limit
         tags: ["pure", "mcp"]
       }
 
@@ -728,31 +647,12 @@ Module("FeatureBoard") {
         tags: ["pipe", "budget"]
       }
 
-      Chain("SceneFilesFlow") {
-        description: "A saved scene is read and checked, then compiles exactly as the inline scene does."
-        metaphor: "From the drawer to the wall."
-        links: [
-          { source: "/scene_files", target: "load_scene_file", description: "Read and check the file, with its own frame_ms." }
-        ]
-        tags: ["pipe", "io"]
-      }
-
       Chain("LayoutResultsFlow") {
         description: "A scene's layout is read from the compositor; any other noun's is detected by color."
         metaphor: "Read the hook numbers, or sort the tiles."
         links: [
           { source: "/layout_results", target: "scene_layout", description: "The scene noun: every placement as the compositor stamped it." },
           { source: "/layout_results", target: "color_patches", description: "Every other noun: patches of one color, speckle counted." }
-        ]
-        tags: ["pipe", "mcp"]
-      }
-
-      Chain("FrameSelectionFlow") {
-        description: "A result names its frames, or spreads them across the loop, before its picture and grids are built."
-        metaphor: "Choose the sections, then photograph them."
-        links: [
-          { source: "/frame_selection", target: "select_frames", description: "N, N-M, all or a list, at most eight." },
-          { source: "select_frames", target: "sample_frames", description: "No frame named: eight spread evenly across the loop." }
         ]
         tags: ["pipe", "mcp"]
       }
@@ -771,7 +671,7 @@ Module("FeatureBoard") {
       Kernel("FeatureBoardKernel") {
         description: "Governs the board: keeps every card design-only until it graduates into its owning layer spec, and holds each card to the device facts it must respect."
         metaphor: "The shop foreman who checks the outline before any tool goes on the wall."
-        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow', 'SceneAnchorFlow', 'LeanResultsFlow', 'SceneShapesFlow', 'SceneScrollFlow', 'SceneFilesFlow', 'LayoutResultsFlow', 'FrameSelectionFlow', 'ScrollTextParityFlow']
+        directive_chains: ['ScrollGapFlow', 'MusicBarsFlow', 'RenderOptionsFlow', 'ProgramUploadFlow', 'PipelinedUploadFlow', 'SceneAnchorFlow', 'LeanResultsFlow', 'SceneShapesFlow', 'SceneScrollFlow', 'LayoutResultsFlow', 'ScrollTextParityFlow']
         invariants: [
           "DESIGN ONLY: No card on this board is built. A card graduates by moving its Functions into its owning layer module's spec when the code lands, and leaves the board.",
           "BUDGET FIRST: Every frame a card adds (gap frames, repeated program pages) counts against the measured 30,720-byte 0x04 payload ceiling, 79 frames at 64x16 after the 27-byte header, and is planned before rendering, never truncated after.",
@@ -800,9 +700,9 @@ Module("FeatureBoard") {
       - F5 to GuardedTransport (the ack window), with the measured window recorded through DeviceProfileLedger.
       - F8 and F11 to PixelFramePipeline, which owns the scene compositor (opensign.animation.scene).
       - F10's rasterize_shape to PixelFramePipeline, beside the text renderers in opensign.animation.render, as the brush SceneCanvas's bake_brush calls; the compositor never draws a shape.
-      - F9 to the coolled-verbs MCP server (opensign.sdk.verbs_mcp), which no layer spec covers yet; F12 to the coolled CLI and that server.
+      - F9 to the coolled-verbs MCP server (opensign.sdk.verbs_mcp), which no layer spec covers yet.
       - F14 to that server, with scene_layout from PixelFramePipeline's scene compositor and color_patches beside it in opensign.animation.
-      - F15 and F16 to that server: F15 where render and plan pick their frames and stack the picture, F16 where render compiles text.
+      - F16 to that server, where render compiles text.
       - All wire encoding and every BLE write to CoolLEDXProtocol and GuardedTransport; nothing on this board touches the radio.
     cards: |
       F1 Scroll gap -- status: ready.
@@ -846,7 +746,7 @@ Module("FeatureBoard") {
         Why: some sprites are geometry, and some are words. Pac-Man is a pie slice and the moon two overlapping circles, and an agent states geometry more reliably than it draws rows. The birthday loop (2026-11-07) needed three words in the lettering render text draws, so the agent rendered each word and copied its glyph rows out of the text grid into sprites by hand.
         Shape: a brush, not a placement. rasterize_shape draws a pie, circle, rect or line from size, color and mouth (pie, in degrees), or a line of text from text, color and font_size, and returns rows in the legend; SceneCanvas's bake_brush adds them to a scene as an ordinary sprite and placement. SceneCanvas moved shapes out of the compositor because a placement drawn at compile time breaks LITERAL PIXELS and freezes the rasterizer into every saved scene's bytes; for text the rasterizer includes a font, so a font change would reletter every saved scene that holds words.
         Font: every text path letters in Pillow's built-in font. Still text and render's host-side scroll draw it at size 10, and render_wide_text draws it at the panel's height, 16, for the panel's own scroll (see F16); font_size defaults to 10, so baked words match still text.
-        Depends: SceneCanvas's bake_brush and plan_edit, so the rows reach a scene file without the agent copying them, and F12, for the file.
+        Depends: SceneCanvas's bake_brush and plan_edit, so the rows reach a scene file without the agent copying them. The file itself is built: F12 graduated into PixelFramePipeline's load_scene_file (2026-11-11).
         Open: how a pie's mouth rounds at 10 px.
         Cost: none; the scene holds only rows.
         Accept: a pie with mouth 0 bakes the same rows as a filled circle of the same size; text baked at font_size 10 lights exactly the pixels render text lights for the same words and color, trimmed to its box; a scene that holds baked rows compiles to the same packets as the same rows typed by hand.
@@ -855,21 +755,11 @@ Module("FeatureBoard") {
         Shape: scene scroll with scroll_px and direction composites the scene's frames as one sprite marching across the panel, cycling as it goes, through the same path as create_scrolling_gif_bundle.
         Cost: one pass is (panel width + scene width) / scroll_px frames, thinned to the 79-frame budget like an animation scroll: a full-width scene at 2 px is 64 frames.
         Accept: scrolling a one-frame scene equals coolled animation --scroll of the same image, and the pass is thinned, never truncated.
-      F12 Scene files -- status: ready.
-        Why: the art an agent draws should outlive the conversation. examples/scenes holds the first two pieces, and replaying them today means pasting the JSON back into an MCP call or sending their compiled bundles with coolled send. Pasting is also where a scene breaks: the birthday loop (2026-11-07), 40 frames in 13,839 characters, went into an MCP call by hand three times, twice as a six-frame preview for render and once whole for plan, and one paste added a character to a sprite row, which only the row-width check caught.
-        Shape: coolled scene FILE, with the usual send flags and --preview, and the MCP server's scene noun with a path both read a scene file, which may carry its own frame_ms, through load_scene_file.
-        Cost: none.
-        Accept: a scene file compiles to the same packets as the same scene passed inline, the same plan_id, and scripts/render_scenes.py's previews come from the same compiler.
       F14 Layout results -- status: proposed.
         Why: the picture shows what a frame looks like but not where things are to the pixel, and the text grid that does is about 1,000 characters a frame to count through. Once placements move, cycle and wrap, an agent cannot easily work out where an item is in frame 30 at all. In the birthday loop (2026-11-07) both alignment questions were placement facts scene_layout states directly: whether a blank row stays between a word (at y 3, 8 rows tall) and the hearts under it (at y 12), and whether a balloon placed at y -1 loses its top row off the panel. The agent answered both by printing text grids from a local script.
         Shape: render and plan return each frame's layout beside the picture. A scene's layout is exact, from the compositor (scene_layout); every other noun's is detected (color_patches). With F9, the layout is what stays when the text grid goes, so F9 should ship with F14 or after it: in the birthday loop the grid was how the agent checked every gap.
         Cost: none on the panel; about 50 characters per placement or patch, against about 1,000 per frame of grid.
         Accept: a scene's layout in every frame matches its placements after cycle, motion and wrap, and a placement buried under later paint shows 0; a still of two solid rectangles lists exactly two patches; a dithered gradient lists a handful of patches and a speckle count per color, not thousands of entries.
-      F15 Frame selection -- status: ready.
-        Why: a result shows a loop's first eight frames unless told otherwise, frame takes one index or one range, and plan takes no frame at all. The birthday loop (2026-11-07) is five beats of eight frames, so its first eight were all the first beat; the agent built a second, shorter scene to see one frame of each beat, and turned plan's picture off. SceneCanvas met the same with a pan: the first drawing's tour came back as eight copies of its opening hold, and fit_pan samples across its path, for pans only.
-        Shape: on render and plan, frame takes a comma-separated list of N and N-M as well as N, N-M and all; with no frame named, both show sample_frames's eight frames spread across the loop; the picture labels each frame with its index, as each text frame already carries its own.
-        Cost: none on the panel; at most eight frames per result, as today.
-        Accept: frame "0,8,16,24,32" returns those five frames in that order; a 40-frame loop with no frame named returns frames 0, 5, 10, 15, 20, 25, 30 and 35, which reach every beat of the birthday loop; a loop of eight frames or fewer returns them all, as today; no packet or plan_id changes.
       F16 Scrolling-text parity -- status: ready.
         Why: render and plan letter scrolling text differently. render text with scroll draws a host-side flipbook in Pillow's built-in font at size 10, the size still text uses, while plan text with scroll sends a render_wide_text banner in the same font at the panel's height, 16, for the panel's own scroll, so HAPPY previews 8 rows tall with one-pixel stems and is sent 11 rows tall with two-pixel stems (2026-11-10). The two scroll arguments' descriptions say the verbs scroll differently but not that the lettering changes, so an agent that previews with render and then plans sends lettering it never saw. The flipbook dates from render's first version, before plan sent text through the panel's own scroll; coolled text keeps it behind --flipbook.
         Shape: render text with scroll returns the banner plan sends, built by the same render_wide_text call, as one picture at the panel's height and the banner's width with its text grid, as plan's preview already shows it.
@@ -889,7 +779,7 @@ Module("FeatureBoard") {
       - What push rate does the panel tolerate for 0x01 before it drops or queues packets?
       - Does a 0x04 upload show the same progress indicator as 0x02, and does it survive power loss the way 0x02 content does?
       - How many chunks can the panel buffer in flight before it rejects one with 0x05?
-      - Which layer spec should own the coolled-verbs MCP surface? None covers it today; SignControlService is the nearest.
+      - Which layer spec should own the coolled-verbs MCP surface? None covers it today; SignControlService is the nearest. F15's select_frames and sample_frames are the first built Functions waiting for it, in opensign.sdk.verbs_mcp.
       - How long does Cursor let one MCP tool call run? accept waits 25 s before leaving an upload to the background, which is a guess, not a measurement.
     provenance: |
       - F1 and F2 came out of the side-scroll review (2026-09-05). F3 was deferred until the scroll work merged (PR #2). F4 is motivated by multi-page controllers that re-upload per page, such as RavestickBoard (github.com/du13500/RavestickBoard-for-CoolLED1248). F5 came out of the upload-time review (2026-10-29).
@@ -897,5 +787,6 @@ Module("FeatureBoard") {
       - F14 came out of reading the Pac-Man chase back through render (2026-11-02): the picture and the text grid both arrived, and neither said where an item was without counting.
       - F6 declared motion, F7 cycles and F13 mirror and erase graduated into PixelFramePipeline when they were built together (2026-11-02). A wrapping item's trip round the panel joins the least common multiple that sets a scene's length, so a wrap loops without a seam unless a stated length cuts it.
       - F15 and F16 came out of a birthday loop (2026-11-07), a 40-frame scene of five beats sent as plan_id 7f844c0d5c779c04 and kept outside the repo, and the review of that session (2026-11-10), which also added its evidence to F12 and F14 and turned F10's shapes, and its text, into brushes, as SceneCanvas's relation_to_feature_board asked.
+      - F12 scene files and F15 frame selection were built together from that review (2026-11-11). F12 graduated into PixelFramePipeline as load_scene_file, which coolled scene, the coolled-verbs scene noun's path and the scene scripts all read through, so a 40-frame scene no longer goes into every render and plan call by hand, where one paste had added a character to a sprite row. F15 lives in the coolled-verbs server: frame takes a list such as 0,8,16,24,32 on render and plan, a result that names no frame spreads its eight across the loop (0, 5, 10 ... 35 of the birthday loop's 40, reaching all five beats), and the picture labels each frame with its index. Its select_frames and sample_frames wait there for a layer spec (see open_questions).
   }
 }

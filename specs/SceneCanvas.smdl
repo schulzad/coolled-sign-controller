@@ -30,7 +30,7 @@ Module("SceneCanvas") {
         description: "A picture of a canvas for whoever is painting it: the whole scaled to the viewer's picture budget, one region as large as the budget allows, or the windows passers-by will see. Every look states its scale and whether that is legible for this viewer, and uses the canvas's own coordinates; no look changes the scene to change the view."
         metaphor: "Looking from across the street, or from the scaffold through a frame held up to one square."
         parameters: {
-          scene: { type: "object", description: "The scene, or a scene file once FeatureBoard card F12 lands.", required: true },
+          scene: { type: "object", description: "The scene, or a scene file read by PixelFramePipeline's load_scene_file (FeatureBoard card F12, built 2026-11-11).", required: true },
           view: { type: "enum", options: ["overview", "region", "windows"], description: "What to look at.", required: false, default: "overview" },
           region: { type: "array[int]", description: "region: [x, y, width, height] in canvas pixels. overview: the region to box.", required: false },
           margin: { type: "int", description: "region: canvas pixels of surroundings shown on every side.", required: false, default: 16 },
@@ -974,7 +974,7 @@ Module("SceneCanvas") {
       - Region looks were tiles to survey and rectangles to work: region takes any rectangle.
     surface: |
       coolled-verbs went unused for the whole first drawing: it composes only at the panel's size, takes a scene inline, and returns one fixed-scale picture. The one call that worked, at the very end, went through the bundle noun, which takes a path. Keeping its four verbs, the drawing says the surface should be:
-      - Everything by path. A scene file is the reference and a revision is the hash of its bytes; inline scenes stay for panel-sized sketches (FeatureBoard card F12).
+      - Everything by path. A scene file is the reference and a revision is the hash of its bytes; inline scenes stay for panel-sized sketches (FeatureBoard card F12, built 2026-11-11: render and plan take a scene file by path).
       - render scene with a view: panel, today's output and the default for a scene with no size; overview; region, any rectangle with a margin; windows; or clean, with no grid or rulers, for sharing. revision looks at a past one, and compare puts revisions side by side. Each look comes back as one picture and one line of text: extent, scale, ruler step, revision and journal number. No text grids beside pictures (card F9).
       - describe scene: the revision, size and counts; with at, a list of pixels, trace_pixel; with hidden, hidden_placements; coverage; outline for a region; history, the journal.
       - plan edit with operations against a revision, then accept: the plan leads with the count and boxes, then the picture, the forks it made and the overlays inside the changed boxes; accept writes the file and returns the new revision. A re-bake is a plan edit that replaces a block-in's rows.
@@ -1009,10 +1009,10 @@ Module("SceneCanvas") {
       - Estimated, and labeled so: generated tokens at about 4 characters each, and picture tokens at width times height over 750. Input tokens, the context re-read on every call and the larger cost, cannot be read from the transcript at all.
       The first reading, the ringed planet: 28 minutes, 89 tool calls (33 text edits, 25 pictures read, 23 shell commands, 6 files written), about 46,000 generated tokens and 24,000 picture tokens, 25 looks, 12 versions, 19 logged changes. Across the gallery, the 64x16 pieces run 6 to 12 sprites, 19 to 57 placements and 283 to 504 characters; the ringed planet is 144 panels of canvas, 34 sprites, 257 placements and 219,896 characters, 1,483 of them typed by hand, and it never lights green.
     relation_to_feature_board: |
-      - F9 (lean results) and F12 (scene files) come first: at canvas sizes, text grids and re-sent scenes are the cost. The 512x16 probe scene was 8,063 characters, re-sent with every inline render.
+      - F9 (lean results) and F12 (scene files) come first: at canvas sizes, text grids and re-sent scenes are the cost. The 512x16 probe scene was 8,063 characters, re-sent with every inline render. F12 is built (2026-11-11): render and plan take a scene file by path, read through PixelFramePipeline's load_scene_file, so F9 is the one left.
       - F10 changes shape: a pie drawn as a placement at compile time breaks LITERAL PIXELS and would freeze its rasterizer into every saved scene's bytes, so here it is a brush that bakes a sprite. The board's F10 says so now (2026-11-10) and adds text, whose rasterizer includes a font: the birthday loop's greeting (2026-11-07) was copied out of render text's grid by hand.
       - F11 becomes a fit: the pan that enters one edge and leaves the other.
-      - F15 spreads a plan's frames across any loop, as fit_pan's plan spreads them across a path, so neither a pan's opening hold nor a loop's first beat stands in for the whole.
+      - F15, built 2026-11-11, spreads render's and plan's frames across any loop, as fit_pan's plan spreads them across a path, so neither a pan's opening hold nor a loop's first beat stands in for the whole.
       - F6, F7, F8 and F13 keep their shape: they say where, when and which way round, never what.
       - F13's K already works today, as a letter outside the legend recolored black: the first drawing used it for the night side, the ground and every shadow. What the card adds is making it the default.
     evidence_basis: |

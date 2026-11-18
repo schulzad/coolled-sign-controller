@@ -79,7 +79,7 @@ An AI agent drew these through the [MCP server](#mcp-server). Each is a scene: s
 | **Aquarium**<br><sub>`aquarium.json`<br>4 frames · 250 ms</sub> | <img src="examples/generated/scenes/aquarium.gif" width="512" alt="A yellow fish and a red fish facing each other among swaying green seaweed, under a rippled blue surface and over yellow sand, with cyan bubbles rising"> |
 | **Curtain call**<br><sub>`curtain-call.json`<br>40 frames · 180 ms</sub> | <img src="examples/generated/scenes/curtain-call.gif" width="512" alt="Red curtains with magenta folds part under a chasing marquee on a performer in a yellow hat standing in a pool of light, who tips the hat and bows with a red rose before the curtains snap shut on a bare bulb"> |
 
-`uv run python scripts/render_scenes.py` rebuilds these renders and a frame bundle for each scene, and `coolled send examples/generated/scenes/night-skyline.bundle.json` plays one on the panel. To look at a drawing before sending it without the MCP server, `uv run python scripts/picture.py SOURCE OUT.png` renders a scene file or a text drawing to the same picture `render` returns. [`pacman-chomp.txt`](examples/scenes/pacman-chomp.txt) is the chomp as it was first drawn, by hand in `draw`'s format: 2,560 characters that compile to the same frames as its scene.
+`coolled scene examples/scenes/night-skyline.json` plays one on the panel, and `uv run python scripts/render_scenes.py` rebuilds these renders and a frame bundle for each scene, which `coolled send` plays too. To look at a drawing before sending it without the MCP server, `uv run python scripts/picture.py SOURCE OUT.png` renders a scene file or a text drawing to the same picture `render` returns. [`pacman-chomp.txt`](examples/scenes/pacman-chomp.txt) is the chomp as it was first drawn, by hand in `draw`'s format: 2,560 characters that compile to the same frames as its scene.
 
 **Bigger than the panel.** [`examples/canvas/ringed-planet/`](examples/canvas/ringed-planet) is a 384×384 piece an agent painted coarse to fine in 25 looks: a ringed gas giant rising over a small moon's horizon, with a lander and one astronaut. The MCP server can't compose past the panel's size yet, so the agent worked through throwaway scripts, kept beside the scene: brushes that bake plain rows from one shared model of the planet, rings and sun, and a workspace for looking at one region at a time, tracing a pixel to the sprite that painted it, and diffing versions. The folder also holds every look, every saved version, and the agent's plan, log and account. [`specs/SceneCanvas.smdl`](specs/SceneCanvas.smdl) is the design it tests.
 
@@ -176,6 +176,7 @@ coolled text "HELLO WORLD"                       # firmware-native scroll where 
 coolled image logo.png --auto-levels
 coolled animation clip.webp                      # aliases: anim, gif
 coolled animation clip.gif --scroll              # march the clip across the panel
+coolled scene examples/scenes/pacman-chomp.json  # sprites placed by coordinate, at the file's frame_ms
 coolled text "HELLO WORLD" --preview hello.gif        # writes the preview; does not send
 
 # Controls
@@ -200,13 +201,14 @@ curl -X POST http://127.0.0.1:8124/text -H 'content-type: application/json' \
 | `text "MSG"` | — | Render text (scrolling by default) and send |
 | `image <path>` | — | Fit an image to the panel and send; a still also sets the panel's movement mode to static, so it never inherits the scroll `text` left behind |
 | `animation <path>` | `anim`, `gif` | Render an animated GIF, WebP, APNG, or other Pillow-supported image and send |
+| `scene <file>` | — | Compile a scene file (small sprites placed by coordinate, as the MCP server's `scene` noun takes them) and send it at the file's own `frame_ms`; `--frame-ms` overrides it |
 | `send <bundle>` | `opensign-send bundle` | Send a prepared frame-bundle JSON |
 | `control …` | `opensign-send control` | Send a control command (`brightness`, `power`, …) |
 | `serve` | `opensign-api` | Run the localhost API |
 
 Flags worth knowing (run `coolled <command> --help` for the full list):
 
-- **Every render/send command:** `--dry-run`, `-v`/`--verbose` (print the full plan/result JSON), `--preview PATH` (write a `.png`/`.gif` of exactly what the panel would light, instead of sending), `--bundle-out PATH`, `--rotate {0,90,180,270}`, `--flip-horizontal`/`--flip-vertical`, `--profile PATH`.
+- **Every render/send command:** `--dry-run`, `-v`/`--verbose` (print the full plan/result JSON), `--preview PATH` (write a `.png`/`.gif` of exactly what the panel would light, instead of sending), `--bundle-out PATH`, `--profile PATH`, and on all but `scene`, which is drawn the way the panel shows it, `--rotate {0,90,180,270}` and `--flip-horizontal`/`--flip-vertical`.
 - **Fit (`image`, `animation`):** `--fit contain` keeps the whole source with padding, `cover` fills by cropping, and `fill` distorts the aspect ratio (`stretch` is an alias for `fill`).
 - **Color (`image`):** `--dither`, `--auto-levels`, `--black-level`, `--white-level`, and `--temporal N` for [temporal color](#temporal-color-shades-between-the-8). Above 16 subframes it warns but still sends; a `.png` preview shows the subframes blended, a `.gif` shows them raw.
 - **Animation:** `--key-color` / `--key-tolerance` knock a bright background out to black; `--scroll` (with `--scroll-px` / `--direction`) marches the clip across the panel as a sprite.
@@ -234,12 +236,12 @@ Flags worth knowing (run `coolled <command> --help` for the full list):
 
 | Verb | Nouns | Returns |
 | --- | --- | --- |
-| `describe` | `panel`, `legend`, `upload` | Geometry, colors, capability statuses, and whether `accept` sends; the character each color renders as; the last upload's progress or result |
+| `describe` | `panel`, `legend`, `upload` | Geometry, colors, capability statuses, how many frames one upload holds, and whether `accept` sends; the character each color renders as; the last upload's progress or result |
 | `render` | `text`, `draw`, `scene`, `pattern`, `image`, `animation`, `bundle` | Each frame as a picture and as text, one character per pixel (`.` off, `#` lit, or a color letter) |
 | `plan` | the same as `render` | What the panel will show, the packets a send writes, blockers, warnings, and a `plan_id`; never sends |
 | `accept` | none; takes a plan's `plan_id` | Sends the plan, but only on a server started with `--execute` |
 
-`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`: scrolling text and animations (in place or with `scroll`) are trimmed to the same frame budget the CLI sends (79 at 64×16), and `fit` takes the CLI's `contain`, `cover`, and `fill`. `render` and `plan` also return the frames as one picture, each LED drawn 8 pixels wide on a grid and the frames stacked top to bottom, so an agent that can see images can judge the result at a glance; `picture=false` leaves it out.
+`render` compiles through the same `PixelAnimationStudio` as the CLI, so the grid matches `--preview`: scrolling text and animations (in place or with `scroll`) are trimmed to the same frame budget the CLI sends (79 at 64×16), and `fit` takes the CLI's `contain`, `cover`, and `fill`. `render` and `plan` also return the frames as one picture, each LED drawn 8 pixels wide on a grid and the frames stacked top to bottom, each frame of a loop labeled with its index, so an agent that can see images can judge the result at a glance; `picture=false` leaves it out. Either verb shows at most eight frames: a longer loop shows eight spread evenly across it (0, 5, 10 … 35 of 40), and `frame` names others, as `N`, `N-M`, `all`, or a list such as `0,8,16,24,32`. On `plan`, `frame` only chooses what the picture shows.
 
 ```
 render text value=HELLO   (rows 4-11 of 16)
@@ -280,7 +282,7 @@ RRRRRRR
 }
 ```
 
-In a sprite `.` is transparent, `K` paints off over whatever lies beneath it, legend letters light their color, and any other letter, like `X` here, takes the color each copy's `colors` gives it. `at` is the sprite's top-left corner and may hang off the panel, `"mirror": "x"` or `"y"` flips a copy, and later placements draw on top. `items` appear in every frame, and an optional `frames` list adds each frame's own placements on top of them, so a four-frame Pac-Man chomp is five small sprites and a list of positions. It compiles to exactly the packets of the same animation hand-drawn as 2,560 characters of `draw`.
+In a sprite `.` is transparent, `K` paints off over whatever lies beneath it, legend letters keep their own colors unless a copy's `colors` recolors them, and a letter outside the legend, like `X` here, has no color until each copy's `colors` gives it one. `at` is the sprite's top-left corner and may hang off the panel, `"mirror": "x"` or `"y"` flips a copy, and later placements draw on top. `items` appear in every frame, and an optional `frames` list adds each frame's own placements on top of them, so a four-frame Pac-Man chomp is five small sprites and a list of positions. It compiles to exactly the packets of the same animation hand-drawn as 2,560 characters of `draw`.
 
 An item can also change from frame to frame. `"sprite"` may list names and `"cycle"` list positions in place of `at`, one per frame and repeating, and `"move": [dx, dy]` steps the item that far each frame; with `"wrap": true` it comes back in at the opposite edge once it leaves. Written this way the chomp needs no `frames` list, and it plans the same packets. With the chomp's sprites, this one item chomps its way across the panel and round again:
 
@@ -289,6 +291,8 @@ An item can also change from frame to frame. `"sprite"` may list names and `"cyc
 ```
 
 A scene runs for its `"length"`, or else for the least common multiple of its `frames` list, every list an item repeats, and every wrapping item's trip round the panel. Here that is 74 frames: two sprites, and a 37-frame trip for a 10-pixel sprite to clear 64 + 10 columns at 2 a frame. The count is settled before anything is drawn, and a scene that needs more than one upload holds is refused, naming what set the count.
+
+Saved as a JSON file, which may carry its own `frame_ms`, a scene goes to `render` and `plan` by `path` instead of inline, so the preview and the send read the same document and a long scene is never pasted twice; `accept` refuses if the file has changed since its plan. `coolled scene FILE` sends one from the command line, and every `.json` file in `examples/scenes/` is one.
 
 `plan` dry-runs the real delivery. Its `plan_id` is a hash of the exact packet bytes and the panel they go to, and its `next` field holds the matching `accept` call, which needs only that `plan_id`: the server remembers its last 32 plans (and forgets them on restart, after which `accept` also takes the plan's `arguments`). `accept` plans the same content again and refuses if the bytes have changed since (an edited source file, a re-profiled panel), so what goes out is what was reviewed. Scrolling text goes out as the panel's native firmware scroll, as with `coolled text`. An upload still running after 25 seconds carries on in the background, where `describe upload` follows it; a full 79-frame upload takes about a minute on the reference panel.
 

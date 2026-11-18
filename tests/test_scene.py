@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from opensign.animation.preview import contact_sheet
-from opensign.animation.scene import compile_drawing, compile_scene
+from opensign.animation.preview import LABEL_HEIGHT, contact_sheet
+from opensign.animation.scene import compile_drawing, compile_scene, load_scene_file
 from opensign.contracts import FrameBundle
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -16,8 +16,8 @@ SCENES = sorted((EXAMPLES / "scenes").glob("*.json"))
 
 @pytest.mark.parametrize("path", SCENES, ids=[path.stem for path in SCENES])
 def test_saved_scenes_still_compile_to_their_bundles(path: Path) -> None:
-    scene = json.loads(path.read_text(encoding="utf-8"))
-    bundle = compile_scene(scene, 64, 16, frame_ms=scene["frame_ms"], max_frames=79)
+    scene, frame_ms = load_scene_file(path)
+    bundle = compile_scene(scene, 64, 16, frame_ms=frame_ms, max_frames=79)
     saved = FrameBundle.load(EXAMPLES / "generated" / "scenes" / f"{path.stem}.bundle.json")
     assert (bundle.frame_hashes, bundle.frame_durations_ms) == (
         saved.frame_hashes, saved.frame_durations_ms
@@ -32,6 +32,34 @@ def test_the_hand_drawn_chomp_matches_its_scene() -> None:
     assert by_hand.frame_hashes == from_sprites.frame_hashes
 
 
+def test_load_scene_file_reads_its_own_frame_ms_or_falls_back(tmp_path: Path) -> None:
+    path = tmp_path / "dot.json"
+    path.write_text('{"sprites": {"dot": ["W"]}, "frame_ms": 150, "notes": {"dot": "one light"}}')
+    scene, frame_ms = load_scene_file(path)
+    assert (frame_ms, scene["notes"]) == (150, {"dot": "one light"})
+    path.write_text('{"sprites": {"dot": ["W"]}}')
+    assert load_scene_file(path, frame_ms=90)[1] == 90
+    for text, message in [
+        ("[1, 2]", "one JSON object"),
+        ('{"sprites": {}', "not JSON"),
+        ('{"frame_ms": 0}', "at least 1"),
+        ('{"frame_ms": 1.5}', "whole number"),
+        ('{"frame_ms": true}', "whole number"),
+    ]:
+        path.write_text(text)
+        with pytest.raises(ValueError, match=message):
+            load_scene_file(path)
+
+
+def test_a_scene_file_compiles_as_the_same_scene_inline() -> None:
+    path = EXAMPLES / "scenes" / "pacman-chomp.json"
+    scene, frame_ms = load_scene_file(path)
+    inline = json.loads(path.read_text(encoding="utf-8"))
+    assert compile_scene(scene, 64, 16, frame_ms=frame_ms).frame_hashes == compile_scene(
+        inline, 64, 16, frame_ms=inline["frame_ms"]
+    ).frame_hashes
+
+
 def test_contact_sheet_stacks_frames_of_any_width() -> None:
     wide, narrow = Image.new("RGB", (8, 2), "red"), Image.new("RGB", (4, 2), "blue")
     sheet = contact_sheet([wide, narrow], scale=2, gap=1)
@@ -39,6 +67,16 @@ def test_contact_sheet_stacks_frames_of_any_width() -> None:
     assert [sheet.getpixel(xy) for xy in [(1, 1), (1, 6), (12, 6)]] == [
         (255, 0, 0), (0, 0, 255), (64, 64, 64)
     ]
+
+
+def test_contact_sheet_labels_each_frame_above_it() -> None:
+    red, blue = Image.new("RGB", (4, 2), "red"), Image.new("RGB", (4, 2), "blue")
+    sheet = contact_sheet([red, blue], scale=2, gap=1, labels=["frame 0", "frame 1"])
+    assert sheet.size == (8, 2 * (LABEL_HEIGHT + 4) + 1)
+    assert sheet.getpixel((1, LABEL_HEIGHT + 1)) == (255, 0, 0)
+    assert sheet.getpixel((1, 2 * LABEL_HEIGHT + 4 + 1 + 1)) == (0, 0, 255)
+    with pytest.raises(ValueError, match="one label per frame"):
+        contact_sheet([red, blue], labels=["frame 0"])
 
 
 def test_compile_scene_refuses_more_frames_than_one_upload_holds() -> None:

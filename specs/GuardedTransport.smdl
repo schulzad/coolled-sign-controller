@@ -25,7 +25,7 @@ Module("GuardedTransport") {
       }
 
       Directive("/deliver") {
-        description: "Guarded physical delivery: connect, subscribe to notifications, write every chunk, and (when flow_control.await_ack) wait for each per-packet ack. Requires an explicit execute flag from the caller -- the transport never sets that flag's default. Callers do: the one-shot CLIs (coolled text/image/gif, opensign-send) pass execute=true by default and take --dry-run to opt out, while the long-running API server defaults to false (render-only until armed)."
+        description: "Guarded physical delivery: connect, subscribe to notifications, write every chunk, and (when flow_control.await_ack) wait for each per-packet ack. Requires an explicit execute flag from the caller -- the transport never sets that flag's default. Callers do: the one-shot CLIs (coolled text/image/gif/scene, opensign-send) pass execute=true by default and take --dry-run to opt out, while the long-running API server defaults to false (render-only until armed)."
         metaphor: "Actually mailing the pages and collecting signatures."
         parameters: {
           encoded: { type: "EncodedPayload", description: "Framed packets + flow_control.", required: true },

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from opensign.animation.preview import image_from_text, text_preview
+from opensign.animation.preview import LABEL_HEIGHT, image_from_text, text_preview
 
 pytest.importorskip("mcp.server.fastmcp")
 
@@ -129,6 +129,9 @@ def test_verbs_with_no_noun_list_their_nouns() -> None:
     content = ["text", "draw", "scene", "pattern", "image", "animation", "bundle"]
     assert [n["noun"] for n in render()["nouns"]] == content
     assert [n["noun"] for n in plan()["nouns"]] == content
+    usage = {n["noun"]: n["args"] for n in plan()["nouns"]}
+    assert usage["scene"] == "scene|path [frame_ms] [frame]"
+    assert usage["image"] == "path [fit] [dither] [frame]"
     assert asyncio.run(tool("accept")())["args"] == "plan_id [arguments]"
     assert "nouns" in error(tool("render")(noun="video"))
     assert "nouns" in error(asyncio.run(tool("plan")(noun="video")))
@@ -158,6 +161,17 @@ def test_describe_legend_says_spaces_do_not_pad_a_row() -> None:
     assert render(noun="scene", scene=dotted)["frame_count"] == 1
 
 
+def test_describe_legend_says_legend_letters_keep_their_colors() -> None:
+    assert "legend letters keep their own colors" in tool("describe")(noun="legend")["scene"]
+    flag = {"sprites": {"flag": ["RGB"]}, "items": [{"sprite": "flag", "at": [0, 0]}]}
+    assert render(noun="scene", scene=flag, style="color")["frames"][0]["text"].startswith("RGB.")
+    white = {**flag, "items": [{"sprite": "flag", "at": [0, 0], "colors": {"G": "white"}}]}
+    assert render(noun="scene", scene=white, style="color")["frames"][0]["text"].startswith("RWB.")
+    unmapped = {"sprites": {"flag": ["RXB"]}, "items": [{"sprite": "flag", "at": [0, 0]}]}
+    refused = error(tool("render")(noun="scene", scene=unmapped))["error"]
+    assert "uses X, which needs a color" in refused
+
+
 def test_render_text_matches_the_compiled_bundle() -> None:
     out = render(noun="text", value="HELLO")
     assert (out["width"], out["height"], out["frame_count"]) == (64, 16, 1)
@@ -175,6 +189,49 @@ def test_render_pages_long_scrolls() -> None:
     assert [f["index"] for f in page["frames"]] == [10, 11, 12]
     assert "page" in error(tool("render")(noun="text", value="HI", scroll=True, frame="all"))["error"]
     assert "outside" in error(tool("render")(noun="text", value="HI", frame="3"))["error"]
+
+
+def test_sample_frames_spreads_a_long_loop_and_keeps_a_short_one_whole() -> None:
+    assert verbs.sample_frames(40) == [0, 5, 10, 15, 20, 25, 30, 35]
+    assert verbs.sample_frames(79) == [0, 9, 19, 29, 39, 49, 59, 69]
+    assert verbs.sample_frames(8) == list(range(8))
+    assert verbs.sample_frames(1) == [0]
+
+
+def test_select_frames_reads_lists_and_ranges_in_the_order_given() -> None:
+    assert verbs.select_frames("0,8,16,24,32", 40) == [0, 8, 16, 24, 32]
+    assert verbs.select_frames("32, 0, 3-5", 40) == [32, 0, 3, 4, 5]
+    assert verbs.select_frames("", 40) == verbs.sample_frames(40)
+    assert verbs.select_frames("all", 3) == [0, 1, 2]
+    for frame, problem in [
+        ("0-8", "names 9 frames, more than the 8"),
+        ("all", "names 40 frames"),
+        ("40", "frame 40 is outside 0-39"),
+        ("5-3", "runs backwards; write 3-5"),
+        ("x", "comma-separated list"),
+        ("1,,2", "comma-separated list"),
+        ("-1", "comma-separated list"),
+    ]:
+        with pytest.raises(ValueError) as refused:
+            verbs.select_frames(frame, 40)
+        assert problem in str(refused.value), frame
+
+
+MARCH = {
+    "sprites": {"dot": ["W"]},
+    "items": [{"sprite": "dot", "at": [0, 0], "move": [1, 0]}],
+    "length": 40,
+}
+
+
+def test_render_spreads_a_long_loop_and_takes_a_list_of_beats() -> None:
+    spread = render(noun="scene", scene=MARCH)
+    assert [f["index"] for f in spread["frames"]] == [0, 5, 10, 15, 20, 25, 30, 35]
+    assert spread["frames"][1]["text"].splitlines()[0].index("#") == 5
+    beats = render(noun="scene", scene=MARCH, frame="0,8,16,24,32")
+    assert [f["index"] for f in beats["frames"]] == [0, 8, 16, 24, 32]
+    backwards = tool("render")(noun="scene", scene=MARCH, frame="9-2")
+    assert "runs backwards" in error(backwards)["error"]
 
 
 def test_render_pattern_and_usage_errors() -> None:
@@ -271,16 +328,22 @@ def test_render_draw_centers_each_frame_on_the_panel() -> None:
     assert out["frames"][1]["text"].count("G") == 2
 
 
-def test_render_shows_its_frames_as_a_picture() -> None:
+def _sheet(result) -> Image.Image:
+    return Image.open(io.BytesIO(base64.b64decode(result.content[1].data)))
+
+
+def test_render_shows_its_frames_as_a_picture_each_labeled_with_its_index() -> None:
     result = tool("render")(noun="draw", value="R\n\nG", frame="all")
-    picture = result.content[1]
-    assert picture.mimeType == "image/png"
-    sheet = Image.open(io.BytesIO(base64.b64decode(picture.data)))
-    scale, gap = verbs.PICTURE_SCALE, verbs.PICTURE_GAP
-    assert sheet.size == (64 * scale, 2 * 16 * scale + gap)
-    x, y = 31 * scale + scale // 2, 7 * scale + scale // 2
+    assert result.content[1].mimeType == "image/png"
+    sheet = _sheet(result)
+    scale, gap, label = verbs.PICTURE_SCALE, verbs.PICTURE_GAP, LABEL_HEIGHT
+    assert sheet.size == (64 * scale, 2 * (label + 16 * scale) + gap)
+    assert sheet.crop((0, 0, 64 * scale, label)).getextrema()[0][1] > 64  # lettered
+    x, y = 31 * scale + scale // 2, label + 7 * scale + scale // 2
     assert sheet.getpixel((x, y)) == (255, 0, 0)
-    assert sheet.getpixel((x, 16 * scale + gap + y)) == (0, 255, 0)
+    assert sheet.getpixel((x, label + 16 * scale + gap + y)) == (0, 255, 0)
+    still = _sheet(tool("render")(noun="draw", value="R"))
+    assert still.size == (64 * scale, 16 * scale)
     assert isinstance(tool("render")(noun="draw", value="R", picture=False), dict)
 
 
@@ -340,12 +403,76 @@ def test_render_scene_says_what_is_wrong() -> None:
     assert "frames[1][0]" in problem({"sprites": ghost, "frames": [[], ["ghost"]]})
 
 
+HEART = {"heart": [".R.R.", "RRRRR", ".RRR.", "..R.."]}
+
+
+def test_a_scene_file_plans_the_same_packets_as_the_scene_inline(
+    panel: Path, tmp_path: Path
+) -> None:
+    path = EXAMPLES / "scenes" / "pacman-chomp.json"
+    chomp = json.loads(path.read_text(encoding="utf-8"))
+    from_file = plan(noun="scene", path=str(path))
+    inline = plan(noun="scene", scene=chomp, frame_ms=chomp["frame_ms"])
+    assert from_file["plan_id"] == inline["plan_id"]
+    assert from_file["summary"].startswith("Play pacman-chomp.json on")
+    assert render(noun="scene", path=str(path))["duration_ms"] == 4 * chomp["frame_ms"]
+    slower = plan(noun="scene", path=str(path), frame_ms=300)
+    assert slower["plan_id"] == plan(noun="scene", scene=chomp, frame_ms=300)["plan_id"]
+    assert slower["plan_id"] != from_file["plan_id"]
+    plain = tmp_path / "heart.json"
+    plain.write_text(json.dumps({"sprites": HEART, "items": [{"sprite": "heart", "at": [30, 6]}]}))
+    assert render(noun="scene", path=str(plain))["duration_ms"] == verbs.FRAME_MS
+
+
+def test_render_scene_from_a_file_says_what_is_wrong(tmp_path: Path) -> None:
+    def problem(**arguments) -> str:
+        return error(tool("render")(noun="scene", **arguments))["error"]
+
+    chomp = EXAMPLES / "scenes" / "pacman-chomp.json"
+    assert "absolute" in problem(path="examples/scenes/pacman-chomp.json")
+    assert "File not found" in problem(path=str(tmp_path / "missing.json"))
+    assert "give scene or path, not both" in problem(path=str(chomp), scene={"sprites": HEART})
+    broken = tmp_path / "broken.json"
+    broken.write_text('{"sprites": {"dot": ["W"]},}')
+    assert "not JSON" in problem(path=str(broken))
+    hasty = tmp_path / "hasty.json"
+    hasty.write_text('{"sprites": {"dot": ["W"]}, "frame_ms": "fast"}')
+    assert "frame_ms must be a whole number" in problem(path=str(hasty))
+    assert "or path, a scene file" in problem()
+
+
+def test_accept_refuses_a_scene_file_edited_since_its_plan(
+    panel: Path, radio: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(verbs, "_execute", True)
+    path = tmp_path / "heart.json"
+    path.write_text(json.dumps({"sprites": HEART, "items": [{"sprite": "heart", "at": [30, 6]}]}))
+    planned = plan(noun="scene", path=str(path))
+    path.write_text(json.dumps({"sprites": HEART, "items": [{"sprite": "heart", "at": [31, 6]}]}))
+    changed = error(asyncio.run(tool("accept")(plan_id=planned["plan_id"])))
+    assert "review" in changed["error"] and radio.written == []
+
+
+def test_plan_pictures_the_frames_it_is_asked_for_and_sends_the_same(panel: Path) -> None:
+    result = asyncio.run(tool("plan")(noun="scene", scene=MARCH, frame="0,8,16"))
+    planned = result.structuredContent
+    assert planned["preview"]["pictured_frames"] == [0, 8, 16]
+    scale, gap = verbs.PICTURE_SCALE, verbs.PICTURE_GAP
+    assert _sheet(result).height == 3 * (LABEL_HEIGHT + 16 * scale) + 2 * gap
+    spread = plan(noun="scene", scene=MARCH)
+    assert spread["preview"]["pictured_frames"] == [0, 5, 10, 15, 20, 25, 30, 35]
+    assert spread["plan_id"] == planned["plan_id"]
+    outside = asyncio.run(tool("plan")(noun="scene", scene=MARCH, frame="40"))
+    assert "outside 0-39" in error(outside)["error"]
+    banner = asyncio.run(tool("plan")(noun="text", value="HI", scroll=True, frame="0"))
+    assert "frame does not apply" in error(banner)["error"]
+
+
 def test_plan_and_accept_a_scene_by_its_plan_id(
     panel: Path, radio: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(verbs, "_execute", True)
-    heart = {"heart": [".R.R.", "RRRRR", ".RRR.", "..R.."]}
-    scene = {"sprites": heart, "items": [{"sprite": "heart", "at": [30, 6]}]}
+    scene = {"sprites": HEART, "items": [{"sprite": "heart", "at": [30, 6]}]}
     result = asyncio.run(tool("plan")(noun="scene", scene=scene))
     assert result.content[1].mimeType == "image/png"
     planned = result.structuredContent

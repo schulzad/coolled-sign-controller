@@ -7,8 +7,10 @@ from PIL import Image
 
 from opensign import cli
 from opensign.animation.studio import PixelAnimationStudio
-from opensign.contracts import DeviceProfile, default_device_profile
+from opensign.contracts import DeviceProfile, FrameBundle, default_device_profile
 from opensign.protocol.codec import CodecError
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
 def test_preview_writes_file_without_hardware_execution(
@@ -67,6 +69,39 @@ def test_animation_command_keeps_anim_and_gif_aliases() -> None:
     assert cli._DIRECT["animation"] is cli._cmd_animation
     assert cli._DIRECT["anim"] is cli._cmd_animation
     assert cli._DIRECT["gif"] is cli._cmd_animation
+
+
+def test_scene_command_sends_a_scene_file_at_its_own_frame_ms(tmp_path: Path, monkeypatch) -> None:
+    sent: list = []
+
+    class FakeRuntime:
+        def __init__(self, _profile: DeviceProfile):
+            pass
+
+        async def upload_frame_bundle(self, bundle, *, execute: bool, **_options):
+            sent.append((bundle, execute))
+            return {"encoded": {}, "transfer": {"success": True, "dry_run": not execute}}
+
+    monkeypatch.setattr(cli, "ProtocolRuntime", FakeRuntime)
+    profile = DeviceProfile(default_device_profile()).save(tmp_path / "profile.json")
+    chomp = EXAMPLES / "scenes" / "pacman-chomp.json"
+    saved = FrameBundle.load(EXAMPLES / "generated" / "scenes" / "pacman-chomp.bundle.json")
+
+    cli._cmd_scene([str(chomp), "--profile", str(profile), "--dry-run"])
+    bundle, execute = sent[-1]
+    assert execute is False
+    assert (bundle.frame_hashes, bundle.frame_durations_ms) == (
+        saved.frame_hashes, saved.frame_durations_ms
+    )
+
+    preview = tmp_path / "chomp.gif"
+    cli._cmd_scene([str(chomp), "--profile", str(profile), "--frame-ms", "300",
+                    "--preview", str(preview)])
+    assert sent[-1][0].frame_durations_ms == [300] * 4 and sent[-1][1] is False
+    assert preview.exists()
+    assert cli._DIRECT["scene"] is cli._cmd_scene
+    with pytest.raises(SystemExit):
+        cli._cmd_scene([str(chomp), "--rotate", "90"])
 
 
 def test_load_profile_falls_back_to_starter_when_local_missing(

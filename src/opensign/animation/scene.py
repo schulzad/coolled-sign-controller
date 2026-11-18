@@ -15,13 +15,18 @@ An item can also change from frame to frame: ``"sprite"`` may list names and
 that far each frame, coming back in at the opposite edge with ``"wrap": true``. A scene
 runs for its ``"length"``, or else for the least common multiple of its frames list,
 every list an item repeats, and every wrapping item's trip round the panel.
+
+A scene file is that object saved as JSON, and may carry the ``"frame_ms"`` it plays at;
+``load_scene_file`` reads one.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageOps
@@ -249,6 +254,29 @@ def _stamp(canvas: Image.Image, sprites: Mapping[str, str], item: Any, where: st
     if mirror:
         image, mask = _MIRRORS[mirror](image), _MIRRORS[mirror](mask)
     canvas.paste(image, (at[0], at[1]), mask)
+
+
+def load_scene_file(path: str | Path, *, frame_ms: int = 200) -> tuple[dict[str, Any], int]:
+    """A scene file's scene, as the file holds it, and the hold its frames show: the
+    file's own ``frame_ms``, or ``frame_ms`` when it names none.
+
+    The scene compiles through ``compile_scene`` exactly as the same object given inline,
+    which checks the rest. Raises ValueError when the file is not one JSON object or its
+    ``frame_ms`` is not a whole number of milliseconds, and OSError when it cannot be read.
+    """
+    try:
+        scene = json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not JSON: {exc.msg} at line {exc.lineno}, column {exc.colno}") from exc
+    if not isinstance(scene, dict):
+        raise ValueError("a scene file holds one JSON object: its sprites and where to place them")
+    if "frame_ms" not in scene:
+        return scene, frame_ms
+    held = scene["frame_ms"]
+    if type(held) is not int or held < 1:
+        raise ValueError(f"frame_ms must be a whole number of milliseconds, at least 1, "
+                         f"not {held!r}")
+    return scene, held
 
 
 def compile_scene(

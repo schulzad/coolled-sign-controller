@@ -1,8 +1,9 @@
 """Render a drawing or a scene file to one picture, the one coolled-verbs' render returns.
 
 Every frame as the panel lights it, each LED drawn several pixels wide on a grid, the
-frames stacked top to bottom. It is how an agent without the MCP server, or a person,
-looks at a drawing before sending it: write it, render the picture, look, fix.
+frames stacked top to bottom and, in a loop, each labeled with its index. It is how an
+agent without the MCP server, or a person, looks at a drawing before sending it: write
+it, render the picture, look, fix.
 
 SOURCE is a scene file (.json, as in examples/scenes, which may carry its own frame_ms)
 or a drawing (any other file): frames written one character per pixel, '.' off, '#'
@@ -17,12 +18,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 from opensign.animation.preview import contact_sheet
-from opensign.animation.scene import compile_drawing, compile_scene
+from opensign.animation.scene import compile_drawing, compile_scene, load_scene_file
 from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
 
 
@@ -38,19 +38,21 @@ def main() -> None:
     args = parser.parse_args()
     budget = PIXEL_BYTES_MAX // (args.width * args.height * 3 // 8)
     try:
-        text = args.source.read_text(encoding="utf-8")
         if args.source.suffix == ".json":
-            scene = json.loads(text)
+            scene, frame_ms = load_scene_file(args.source, frame_ms=args.frame_ms)
             bundle = compile_scene(scene, args.width, args.height,
-                                   frame_ms=scene.get("frame_ms", args.frame_ms), max_frames=budget)
+                                   frame_ms=frame_ms, max_frames=budget)
         else:
+            text = args.source.read_text(encoding="utf-8")
             bundle = compile_drawing(text, args.width, args.height, foreground=args.foreground,
                                      frame_ms=args.frame_ms, max_frames=budget)
     except (OSError, ValueError) as exc:
         print(f"picture: {args.source}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    contact_sheet(bundle.to_images(), scale=args.scale).save(args.output)
+    images = bundle.to_images()
+    labels = [f"frame {index}" for index in range(len(images))] if len(images) > 1 else None
+    contact_sheet(images, scale=args.scale, labels=labels).save(args.output)
     print(f"{args.source}: {len(bundle.frames)} frame(s) -> {args.output}")
 
 

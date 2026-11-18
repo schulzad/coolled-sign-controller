@@ -49,7 +49,7 @@ Module("CoolLEDXProtocol") {
       }
 
       Directive("/transfer") {
-        description: "Hand framed packets plus their flow_control hint to the generic GuardedTransport. The execute flag alone gates real writes vs a byte-exact plan, and still defaults to false at this boundary -- but the one-shot CLIs (coolled text/image/gif, opensign-send) now pass execute=true by default and take --dry-run to opt out; only the long-running API server (SignControlService) stays render-only until armed. This directive is a boundary, not an implementation -- the actual BLE writes and ack handshake live in GuardedTransport."
+        description: "Hand framed packets plus their flow_control hint to the generic GuardedTransport. The execute flag alone gates real writes vs a byte-exact plan, and still defaults to false at this boundary -- but the one-shot CLIs (coolled text/image/gif/scene, opensign-send) now pass execute=true by default and take --dry-run to opt out; only the long-running API server (SignControlService) stays render-only until armed. This directive is a boundary, not an implementation -- the actual BLE writes and ack handshake live in GuardedTransport."
         metaphor: "Passing the sealed pages to the operator at the key."
         parameters: {
           encoded: { type: "EncodedPayload", description: "Packets + flow_control from an encode directive.", required: true },

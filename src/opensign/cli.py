@@ -1,8 +1,8 @@
 """Unified ``coolled`` command line.
 
 A thin umbrella over the focused entry points. Discovery, preview, and service
-commands delegate to their existing CLIs; ``text``/``image``/``animation`` are
-one-shot render-and-send helpers built on the animation studio and the protocol
+commands delegate to their existing CLIs; ``text``/``image``/``animation``/``scene``
+are one-shot render-and-send helpers built on the animation studio and the protocol
 runtime. These send to the panel by default; pass ``--dry-run`` to build the
 transfer plan (and any preview/bundle) without touching Bluetooth, and ``-v`` to
 print the full plan/result JSON.
@@ -26,6 +26,7 @@ import opensign.protocol  # noqa: F401  (registers bundled device codecs)
 from opensign.animation.cache import RenderBundleCache, default_render_cache_dir
 from opensign.animation.preview import save_preview
 from opensign.animation.render import render_wide_text
+from opensign.animation.scene import compile_scene, load_scene_file
 from opensign.animation.studio import PixelAnimationStudio, temporal_fusion_warning
 from opensign.contracts import DeviceProfile, FrameBundle
 from opensign.protocol.codec import CodecError
@@ -86,6 +87,7 @@ Render + send (writes to the panel; --dry-run to preview):
   text "MESSAGE"       Native scroll text by default (--speed 0-10); --no-scroll for static
   image <path>         Fit an image to the panel and send
   animation <path>     Render an animated GIF/WebP/APNG and send (aliases: anim, gif)
+  scene <file.json>    Compile a scene file of placed sprites and send it
   send <bundle.json>   Send a prepared frame bundle
   control ...          Send a control command (brightness/power/...)
 
@@ -99,7 +101,9 @@ Run 'coolled <command> --help' for a command's options.
 """
 
 
-def _add_common_send_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_common_send_arguments(
+    parser: argparse.ArgumentParser, *, orientation: bool = True
+) -> None:
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
     parser.add_argument(
         "--dry-run",
@@ -112,9 +116,10 @@ def _add_common_send_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Also print the full transfer plan/result as JSON on stdout (every packet's bytes).",
     )
-    parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0)
-    parser.add_argument("--flip-horizontal", action="store_true")
-    parser.add_argument("--flip-vertical", action="store_true")
+    if orientation:
+        parser.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0)
+        parser.add_argument("--flip-horizontal", action="store_true")
+        parser.add_argument("--flip-vertical", action="store_true")
     parser.add_argument(
         "--preview",
         type=Path,
@@ -884,12 +889,44 @@ def _cmd_animation(argv: list[str]) -> None:
     _finish(profile, bundle, args)
 
 
+def _cmd_scene(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="coolled scene",
+        description="Compile a scene file, small sprites written as text and placed by "
+        "coordinate as in examples/scenes and coolled-verbs' scene noun, and send it. "
+        "A scene is drawn the way the panel shows it, so there is no --rotate or --flip; "
+        "a placement mirrors itself.",
+    )
+    parser.add_argument("path", type=Path)
+    parser.add_argument(
+        "--frame-ms",
+        type=int,
+        default=None,
+        metavar="MS",
+        help="How long each frame shows (default: the file's own frame_ms, else 200).",
+    )
+    _add_common_send_arguments(parser, orientation=False)
+    args = parser.parse_args(argv)
+    profile = _load_profile(args)
+    scene, frame_ms = load_scene_file(args.path)
+    per_frame = max(1, profile.width * profile.height * 3 // 8)
+    bundle = compile_scene(
+        scene,
+        profile.width,
+        profile.height,
+        frame_ms=frame_ms if args.frame_ms is None else args.frame_ms,
+        max_frames=PIXEL_BYTES_MAX // per_frame,
+    )
+    _finish(profile, bundle, args)
+
+
 _DIRECT = {
     "text": _cmd_text,
     "image": _cmd_image,
     "animation": _cmd_animation,
     "anim": _cmd_animation,
     "gif": _cmd_animation,
+    "scene": _cmd_scene,
 }
 
 

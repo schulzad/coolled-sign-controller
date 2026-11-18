@@ -6,12 +6,16 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from opensign.contracts import FrameBundle
 
 from .render import threshold_to_panel
 from .studio import PixelAnimationStudio
+
+# A contact sheet's label: the band it takes above its frame, and its lettering size.
+LABEL_HEIGHT = 22
+LABEL_FONT_SIZE = 16
 
 
 def scale_frame(image: Image.Image, *, scale: int = 16, grid: bool = False) -> Image.Image:
@@ -30,15 +34,32 @@ def scale_frame(image: Image.Image, *, scale: int = 16, grid: bool = False) -> I
     return enlarged
 
 
-def contact_sheet(images: Sequence[Image.Image], *, scale: int = 8, gap: int = 6) -> Image.Image:
-    """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom."""
+def contact_sheet(
+    images: Sequence[Image.Image],
+    *,
+    scale: int = 8,
+    gap: int = 6,
+    labels: Sequence[str] | None = None,
+) -> Image.Image:
+    """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom,
+    each under its own label in a band of LABEL_HEIGHT when labels are given."""
     if not images:
         raise ValueError("a contact sheet needs at least one frame")
+    if labels is not None and len(labels) != len(images):
+        raise ValueError(
+            f"a contact sheet needs one label per frame, not {len(labels)} for {len(images)}"
+        )
     frames = [scale_frame(threshold_to_panel(image), scale=scale, grid=True) for image in images]
-    height = sum(frame.height for frame in frames) + gap * (len(frames) - 1)
+    band = LABEL_HEIGHT if labels else 0
+    height = sum(frame.height + band for frame in frames) + gap * (len(frames) - 1)
     sheet = Image.new("RGB", (max(frame.width for frame in frames), height), (64, 64, 64))
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default(size=LABEL_FONT_SIZE) if labels else None
     top = 0
-    for frame in frames:
+    for index, frame in enumerate(frames):
+        if labels:
+            draw.text((4, top + 2), labels[index], fill=(224, 224, 224), font=font)
+            top += band
         sheet.paste(frame, (0, top))
         top += frame.height + gap
     return sheet

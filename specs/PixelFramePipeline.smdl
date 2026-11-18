@@ -67,16 +67,16 @@ Module("PixelFramePipeline") {
       }
 
       Directive("/compile_sprite_scene") {
-        description: "Compile a scene of small sprites written as text into a hashed FrameBundle: sprites placed by coordinate, recolored and flipped per placement, items in every frame with an optional frames list on top, and items that step, cycle and wrap from frame to frame. The frame count is settled, and refused over the budget, before anything is stamped, and a moving item in a one-frame scene is refused with the length that crosses the panel once. Shipped as opensign.animation.scene.compile_scene, which the coolled-verbs scene noun, scripts/picture.py and scripts/render_scenes.py call."
+        description: "Compile a scene of small sprites written as text into a hashed FrameBundle: sprites placed by coordinate, recolored and flipped per placement, items in every frame with an optional frames list on top, and items that step, cycle and wrap from frame to frame. The frame count is settled, and refused over the budget, before anything is stamped, and a moving item in a one-frame scene is refused with the length that crosses the panel once. Shipped as opensign.animation.scene.compile_scene, which coolled scene, the coolled-verbs scene noun, scripts/picture.py and scripts/render_scenes.py call; each reads a scene file through load_scene_file, so a saved scene compiles to the packets of the same scene given inline."
         metaphor: "Hanging cut-out stamps on a pegboard and pressing every frame from them."
         parameters: {
-          scene: { type: "object", description: "sprites (name to rows), items, and optionally frames and length.", required: true },
+          scene: { type: "object", description: "sprites (name to rows), items, and optionally frames and length; given inline, or read from a scene file by load_scene_file.", required: true },
           width: { type: "int", description: "Canvas width: the panel's for a send.", required: true },
           height: { type: "int", description: "Canvas height.", required: true },
           frame_ms: { type: "int", description: "The hold every frame shows, one global speed.", required: false, default: 200 },
           max_frames: { type: "int", description: "Frames one upload may carry (79 at 64x16); none for a canvas never sent whole.", required: false }
         }
-        actions: { count: "scene_frame_count", place: "expand_placement", stamp: "stamp_sprite", bundle: "build_frame_bundle" }
+        actions: { load: "load_scene_file", count: "scene_frame_count", place: "expand_placement", stamp: "stamp_sprite", bundle: "build_frame_bundle" }
         kernel: "CompileKernel"
         tags: ["entry", "compile", "scene"]
       }
@@ -295,6 +295,27 @@ Module("PixelFramePipeline") {
         tags: ["pure", "verified-hardware"]
       }
 
+      Function("load_scene_file") {
+        description: "Read a scene file, the scene object saved as JSON: return the object as the file holds it, notes and all, and the hold its frames show, the file's own frame_ms or the caller's when it names none. compile_scene checks the rest exactly as it checks the same object given inline, so a scene file compiles to the same packets and plan_id. coolled scene, the coolled-verbs scene noun's path, scripts/picture.py and scripts/render_scenes.py all read scene files through it. Graduated from FeatureBoard card F12 (2026-11-11)."
+        metaphor: "Taking the template from its drawer and reading the speed off its label."
+        input_parameters: {
+          path: { type: "string", description: "The scene file, JSON.", required: true },
+          frame_ms: { type: "int", description: "The hold to use when the file names none.", required: false, default: 200 }
+        }
+        output_format: {
+          scene: "object The scene, as the file holds it.",
+          frame_ms: "int The file's own frame_ms, or frame_ms when it names none.",
+          raises: "ValueError — when the file is not one JSON object, or its frame_ms is not a whole number of milliseconds, at least 1."
+        }
+        implementation: |
+          def load_scene_file(path, frame_ms=200):
+              scene = the JSON in path, refused unless it is one object
+              if scene names no frame_ms: return scene, frame_ms
+              refuse a frame_ms that is not a whole number of at least 1
+              return scene, the file's frame_ms
+        tags: ["io", "scene"]
+      }
+
       Function("scene_frame_count") {
         description: "Decide how many frames a sprite scene has before anything is stamped: the length it states, or else the least common multiple of its frames list, every list an item repeats (its sprites or its cycle), and every wrapping item's trip round the panel. Refused over the budget, naming the count and what set it; a stated length shorter than one of those lists is refused too, since part of the list would never show."
         metaphor: "Counting the hooks before hanging anything."
@@ -406,9 +427,11 @@ Module("PixelFramePipeline") {
       }
 
       Chain("CompileSpriteSceneFlow") {
-        description: "Sprite scene -> frame count settled against the budget -> each item expanded for each frame -> stamped in order -> hashed bundle."
+        description: "Sprite scene, inline or from a scene file -> frame count settled against the budget -> each item expanded for each frame -> stamped in order -> hashed bundle."
         metaphor: "Count the hooks, chalk where each tool hangs, press every frame, and proof the run."
         links: [
+          { source: "/compile_sprite_scene", target: "load_scene_file", description: "A scene file: the object as saved, and its own frame_ms." },
+          { source: "load_scene_file", target: "scene_frame_count", description: "From here a saved scene compiles exactly as the same object given inline." },
           { source: "/compile_sprite_scene", target: "scene_frame_count", description: "The length, or the least common multiple of what repeats, refused over budget before anything is stamped." },
           { source: "scene_frame_count", target: "expand_placement", description: "Each item's sprite and position in each frame." },
           { source: "expand_placement", target: "stamp_sprite", description: "Items first, then the frame's own placements, later ones on top." },
@@ -439,7 +462,8 @@ Module("PixelFramePipeline") {
           "Encoding and delivery are out of scope: this module produces a FrameBundle and hands it to SignControlService.",
           "A sprite scene's frame count is settled before anything is stamped -- its stated length, or the least common multiple of its frames list, every list an item repeats and every wrapping item's trip round the panel -- and is refused over the upload budget, naming what set it, never truncated.",
           "Frame-to-frame changes (move, wrap, cycle, a list of sprites) belong on items, which appear in every frame; an entry of a scene's frames list is already one frame's placement and refuses them.",
-          "SCENES KEEP THEIR BYTES: a sprite scene that uses none of move, wrap, cycle, a list of sprites, mirror, length or an unmapped K compiles to exactly the packets it did before those existed, so saved scenes and their plan_ids never change."
+          "SCENES KEEP THEIR BYTES: a sprite scene that uses none of move, wrap, cycle, a list of sprites, mirror, length or an unmapped K compiles to exactly the packets it did before those existed, so saved scenes and their plan_ids never change.",
+          "A scene file is the scene object saved as JSON: load_scene_file returns it as saved and reads only its frame_ms, which an explicit hold overrides, so a scene file compiles to exactly the packets of the same scene given inline, the same plan_id whichever way it is sent."
         ]
         tags: ["compile", "transport-neutral", "verified-hardware"]
       }
@@ -451,6 +475,7 @@ Module("PixelFramePipeline") {
     owns: |
       - Source decoding: text, static image, and bounded animated GIF/APNG (composited, alpha-resolved) frames.
       - Frames written as text (compile_drawing) and sprite scenes (compile_scene, opensign.animation.scene): sprites placed by coordinate, recolored and flipped per placement, K painting off, items that step, wrap and cycle from frame to frame, and the frame count settled against the budget before stamping. Motion, cycles, and mirror and erase graduated from FeatureBoard cards F6, F7 and F13 on 2026-11-02; anchors, shapes and scrolling scenes (F8, F10, F11) are still on the board.
+      - Scene files (load_scene_file): a scene saved as JSON with its own frame_ms, read the same way by coolled scene, the coolled-verbs scene noun's path, scripts/picture.py and scripts/render_scenes.py. Graduated from FeatureBoard card F12 on 2026-11-11.
       - Fit/orient to panel geometry.
       - Levels (black/white point) tone remapping before quantization, manual or auto (compute_auto_levels: a value-histogram contrast stretch, read from the source so letterbox bars do not skew it, that rescues low-contrast art); reports which channels can actually cross the panel's 1-bit threshold.
       - Palette-aware quantization + dithering (ordered default for animation; error diffusion opt-in for static).

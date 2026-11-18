@@ -57,7 +57,7 @@
       "source": "src/opensign/animation (studio/preview/scene)",
       "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (multi-frame 64x16 GIFs; budget pinned at 79 frames 2026-08-15); temporal-color (FRC) stills confirmed against the ~62 Hz fusion ceiling",
       "delegates_to": ["DeviceProfileLedger"],
-      "summary": "Scene, sprite scene (sprites placed by coordinate that move, cycle, wrap and flip, its frame count settled against the budget before stamping), animated source, or a still expanded into a temporal (frame-rate-control) subframe loop -> RGB888 -> fit/orient -> levels -> timeline resample -> palette quantize (or temporal dither) -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
+      "summary": "Scene, sprite scene (sprites placed by coordinate that move, cycle, wrap and flip, its frame count settled against the budget before stamping; given inline or read from a scene file), animated source, or a still expanded into a temporal (frame-rate-control) subframe loop -> RGB888 -> fit/orient -> levels -> timeline resample -> palette quantize (or temporal dither) -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
     },
     {
       "module": "SignControlService",
@@ -73,7 +73,7 @@
       "file": "FeatureBoard.smdl",
       "layer": "planning",
       "source": "none yet -- design-only backlog; cards graduate into their owning layer spec when built",
-      "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4), F5 pipelined chunk upload (proposed; needs a hardware ack-window test), F8 anchors, F9 lean results, F12 scene files, F15 frame selection and F16 scrolling-text parity (ready), F10 scene shapes and lettering as brushes, F11 scrolling scenes and F14 layout results (proposed). F6 declared motion, F7 cycles and F13 mirror and erase graduated into PixelFramePipeline (2026-11-02)",
+      "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4), F5 pipelined chunk upload (proposed; needs a hardware ack-window test), F8 anchors, F9 lean results and F16 scrolling-text parity (ready), F10 scene shapes and lettering as brushes, F11 scrolling scenes and F14 layout results (proposed). F6 declared motion, F7 cycles and F13 mirror and erase graduated into PixelFramePipeline (2026-11-02), and F12 scene files followed (2026-11-11); F15 frame selection was built into the coolled-verbs server the same day, where its Functions wait for a layer spec",
       "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService", "DeviceProfileLedger", "GuardedTransport"],
       "summary": "Feature backlog: each card names its entry point, the Functions it needs, its owning layer module, its cost against the measured 30,720-byte / 79-frame 0x04 budget, and its acceptance criteria. Governed by FeatureBoardKernel; nothing here touches the radio."
     },
@@ -133,7 +133,7 @@
     }
   ],
   "shared_invariants": [
-    "No physical BLE write occurs unless execute=true; otherwise a byte-exact dry-run plan is produced. The flag's default is set at the entry point: the one-shot CLIs (coolled text/image/gif, opensign-send) default execute=true and take --dry-run to opt out, while the long-running API server stays render-only until armed.",
+    "No physical BLE write occurs unless execute=true; otherwise a byte-exact dry-run plan is produced. The flag's default is set at the entry point: the one-shot CLIs (coolled text/image/gif/scene, opensign-send) default execute=true and take --dry-run to opt out, while the long-running API server stays render-only until armed.",
     "A claim never advances status without appended evidence citing a source; verified requires live-hardware evidence.",
     "Codec selection is gated on allow_experimental, not on write-vs-plan: verified-only when false (the opt-in strict gate, which also requires replay_safe), verified+experimental when true; the runtime selects with allow_experimental=true for both dry-run and live delivery so a controlled live test can promote experimental toward verified.",
     "Host write success, per-chunk ack telemetry, and observed display confirmation are three separate truths.",

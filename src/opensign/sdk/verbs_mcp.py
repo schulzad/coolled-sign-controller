@@ -23,6 +23,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
@@ -38,7 +39,7 @@ from pydantic import Field
 from opensign.animation.cache import default_render_cache_dir
 from opensign.animation.preview import TEXT_LEGEND, TEXT_STYLES, contact_sheet, text_preview
 from opensign.animation.render import parse_color, render_static_text, render_wide_text
-from opensign.animation.scene import compile_drawing, compile_scene
+from opensign.animation.scene import compile_drawing, compile_scene, load_scene_file
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile, FrameBundle
 from opensign.protocol.codec import CodecError
@@ -57,8 +58,11 @@ SENDS = ToolAnnotations(
     readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
 )
 
-# The most frames one render returns as text; a longer clip is paged with frame.
+# The most frames one render or plan shows; a longer clip is spread across, or paged with frame.
 MAX_FRAMES_PER_CALL = 8
+
+# How long a drawn or scene frame shows when neither the call nor a scene file says.
+FRAME_MS = 200
 
 # The widest native-scroll banner a plan shows as text; the panel still gets all of it.
 MAX_BANNER_PREVIEW = 256
@@ -93,17 +97,20 @@ mcp = FastMCP(
         "a scene, a pattern, an image, an animation or a frame bundle exactly as the "
         "panel would show it, and returns each frame as a picture and as text, one "
         "character per pixel: '.' is off, and either '#' marks a lit pixel (mono) or a "
-        "letter names its color (describe legend). The draw noun reads whole frames "
-        "written that way; the scene noun places small sprites written that way at x,y, "
-        "which is easier to get right than whole frames, and lets a sprite move, cycle "
-        "and flip from frame to frame without writing each frame out. plan compiles "
+        "letter names its color (describe legend). A loop longer than eight frames shows "
+        "eight spread across it, and frame names others, such as 0,8,16. The draw noun "
+        "reads whole frames written that way; the scene noun places small sprites written "
+        "that way at x,y, which is easier to get right than whole frames, and lets a "
+        "sprite move, cycle and flip from frame to frame without writing each frame out; "
+        "a scene saved as a JSON file goes by path instead of inline. plan compiles "
         "content into the packets a send would write, without sending, and returns a "
         "plan_id; accept sends a plan_id, and only when the server was started with "
         "--execute (describe panel says whether it was). Every path must be absolute."
     ),
 )
 
-# plan noun -> (the arguments it reads, the first one required; what it sends)
+# plan noun -> (the arguments it reads, the first one required, or path in its place when
+# it reads path too; what it sends)
 PLANS: dict[str, tuple[tuple[str, ...], str]] = {
     "text": (
         ("value", "scroll", "speed", "foreground", "background"),
@@ -114,9 +121,9 @@ PLANS: dict[str, tuple[tuple[str, ...], str]] = {
         "frames drawn as text, read the way render draw reads them",
     ),
     "scene": (
-        ("scene", "frame_ms"),
+        ("scene", "path", "frame_ms"),
         "sprites placed at x,y, as a still, one frame per entry of frames, or items that "
-        "move and cycle",
+        "move and cycle; inline, or a scene file by path",
     ),
     "pattern": (("value",), "a built-in pattern: test, checker or two-frame"),
     "image": (("path", "fit", "dither"), "an image fitted and quantized to the panel"),
@@ -138,9 +145,17 @@ PLAN_DEFAULTS: dict[str, Any] = {
     "fit": "contain",
     "dither": "",
     "key_color": "",
-    "frame_ms": 200,
+    "frame_ms": 0,
     "scene": {},
 }
+
+
+def _plan_usage(names: tuple[str, ...]) -> str:
+    first, rest = names[0], [name for name in names[1:] if name != "path"]
+    if "path" in names[1:]:
+        first += "|path"
+    return " ".join([first, *(f"[{name}]" for name in [*rest, "frame"])])
+
 
 # verb -> noun -> (arguments, what it returns)
 NOUNS: dict[str, dict[str, tuple[str, str]]] = {
@@ -156,10 +171,10 @@ NOUNS: dict[str, dict[str, tuple[str, str]]] = {
         "draw": ("value [foreground] [frame_ms] [frame] [style]",
                  "frames drawn as text, one character per pixel, each centered on the "
                  "panel; a blank line starts the next frame"),
-        "scene": ("scene [frame_ms] [frame] [style]",
+        "scene": ("scene|path [frame_ms] [frame] [style]",
                   "small sprites drawn as text and placed at x,y, recolored and flipped "
                   "per copy; a still, one frame per entry of frames, or items that move "
-                  "and cycle"),
+                  "and cycle; inline, or a scene file by path"),
         "pattern": ("value [frame] [style]", "a built-in pattern: test, checker or two-frame"),
         "image": ("path [fit] [dither] [style]", "an image fitted and quantized to the panel"),
         "animation": ("path [fit] [dither] [key_color] [scroll] [background] [frame] [style]",
@@ -167,10 +182,7 @@ NOUNS: dict[str, dict[str, tuple[str, str]]] = {
                       "side-scrolling"),
         "bundle": ("path [frame] [style]", "a saved frame bundle (.json)"),
     },
-    "plan": {
-        noun: (" ".join([names[0], *(f"[{name}]" for name in names[1:])]), sends)
-        for noun, (names, sends) in PLANS.items()
-    },
+    "plan": {noun: (_plan_usage(names), sends) for noun, (names, sends) in PLANS.items()},
 }
 
 ACCEPT_USAGE: dict[str, str] = {
@@ -188,14 +200,14 @@ DITHERS = ("none", "ordered", "floyd")
 
 # Arguments render and plan share.
 Value = Annotated[str, Field(description="text: the message. pattern: test, checker or two-frame. draw: the frames, one character per pixel (describe legend), at most the panel's size; a blank line starts the next frame.")]
-FilePath = Annotated[str, Field(description="image, animation or bundle: the file, as an absolute path.")]
+FilePath = Annotated[str, Field(description="image, animation, bundle or scene: the file, as an absolute path. A scene file is the object scene takes, saved as JSON, and may carry its own frame_ms.")]
 Foreground = Annotated[str, Field(description="text: a color name or #rrggbb. draw: the color '#' lights.")]
 Background = Annotated[str, Field(description="text or animation: a color name or #rrggbb.")]
 Fit = Annotated[str, Field(description="image or animation: contain, cover or fill (stretch is an alias).")]
 Dither = Annotated[str, Field(description="image or animation: none, ordered or floyd; omit for none on an image and ordered on an animation.")]
 KeyColor = Annotated[str, Field(description="animation only: a color to knock out to black, or auto to sample it from the frame border.")]
-FrameMs = Annotated[int, Field(description="draw or scene: how long each frame shows, in milliseconds.")]
-Scene = Annotated[dict[str, Any] | None, Field(description='scene only: {"sprites": {"name": ["rows", ...]}, "items": [{"sprite": "name", "at": [x, y], "colors": {"X": "cyan"}}], "frames": [[placements], ...], "length": frames}. A sprite is a small drawing in the legend where "." is transparent, K paints off over whatever lies beneath, and any other letter, such as X, takes the color each placement gives it (a placement may recolor legend letters and K too). at is the sprite\'s top-left corner on the panel and may hang off its edges; "mirror": "x" or "y" flips a placement; later placements draw on top. items appear in every frame, and each entry of frames adds its own placements on top of them. An item can also change from frame to frame: "sprite": ["open", "shut"] shows one name per frame and "cycle": [[x, y], ...] one position per frame in place of at, both repeating, and "move": [dx, dy] steps it that far each frame, coming back in at the opposite edge with "wrap": true. The scene runs for length frames, or else for the least common multiple of its frames list, every list an item repeats and every wrapping item\'s trip round the panel, and is refused past what one upload holds.')]
+FrameMs = Annotated[int, Field(description=f"draw or scene: how long each frame shows, in milliseconds; omit for a scene file's own frame_ms, or else {FRAME_MS}.")]
+Scene = Annotated[dict[str, Any] | None, Field(description='scene only: {"sprites": {"name": ["rows", ...]}, "items": [{"sprite": "name", "at": [x, y], "colors": {"X": "cyan"}}], "frames": [[placements], ...], "length": frames}. A sprite is a small drawing in the legend: its legend letters keep their own colors, "." is transparent, K paints off over whatever lies beneath, and a letter outside the legend, such as X, has no color until each placement\'s colors gives it one (colors may recolor legend letters and K too). at is the sprite\'s top-left corner on the panel and may hang off its edges; "mirror": "x" or "y" flips a placement; later placements draw on top. items appear in every frame, and each entry of frames adds its own placements on top of them. An item can also change from frame to frame: "sprite": ["open", "shut"] shows one name per frame and "cycle": [[x, y], ...] one position per frame in place of at, both repeating, and "move": [dx, dy] steps it that far each frame, coming back in at the opposite edge with "wrap": true. The scene runs for length frames, or else for the least common multiple of its frames list, every list an item repeats and every wrapping item\'s trip round the panel, and is refused past what one upload holds. Saved as JSON, the same object is a scene file, which path takes in place of scene.')]
 
 
 def _noun(verb: str, description: str) -> Any:
@@ -248,44 +260,68 @@ def _frame_budget(profile: DeviceProfile) -> int:
     return PIXEL_BYTES_MAX // max(1, profile.width * profile.height * 3 // 8)
 
 
-def _frames(bundle: FrameBundle, frame: str) -> tuple[list[int], str | None]:
-    """The frame indexes to return, or what is wrong with frame."""
-    count = len(bundle.frames)
-    if frame == "":
-        return list(range(min(count, MAX_FRAMES_PER_CALL))), None
-    if frame == "all":
-        if count > MAX_FRAMES_PER_CALL:
-            return [], (f"the bundle has {count} frames, more than the {MAX_FRAMES_PER_CALL} "
-                        "one call returns; page with frame=N or frame=N-M")
-        return list(range(count)), None
-    try:
-        start, _, end = frame.partition("-")
-        first, last = int(start), int(end or start)
-    except ValueError:
-        return [], f"frame must be N, N-M or all, not {frame!r}"
-    if not 0 <= first <= last < count:
-        return [], f"frame {frame} is outside 0-{count - 1}"
-    if last - first + 1 > MAX_FRAMES_PER_CALL:
-        return [], f"one call returns at most {MAX_FRAMES_PER_CALL} frames"
-    return list(range(first, last + 1)), None
+def sample_frames(frame_count: int, limit: int = MAX_FRAMES_PER_CALL) -> list[int]:
+    """Frames spread evenly across a loop, the first always among them: every frame of a
+    loop no longer than limit, and 0, 5, 10 ... 35 as eight of a 40-frame loop."""
+    if frame_count <= limit:
+        return list(range(frame_count))
+    return [i * frame_count // limit for i in range(limit)]
 
 
-def _picture(images: list[Image.Image]) -> ImageContent:
+def select_frames(frame: str, frame_count: int, limit: int = MAX_FRAMES_PER_CALL) -> list[int]:
+    """The frames a result shows: the ones frame names, as N, N-M or all, or a comma-separated
+    list of those, in the order given; or sample_frames's spread when it names none.
+
+    Raises ValueError saying what is wrong, as in ``frame 41 is outside 0-39``.
+    """
+    if not frame.strip():
+        return sample_frames(frame_count, limit)
+    indexes: list[int] = []
+    for part in (part.strip() for part in frame.split(",")):
+        if part == "all":
+            indexes += range(frame_count)
+            continue
+        named = re.fullmatch(r"(\d+)(?:\s*-\s*(\d+))?", part)
+        if named is None:
+            raise ValueError(f"frame must be N, N-M, all, or a comma-separated list of those, "
+                             f"such as 0,8,16-18; not {frame!r}")
+        first, last = int(named[1]), int(named[2] or named[1])
+        if first > last:
+            raise ValueError(f"frame {part} runs backwards; write {last}-{first}")
+        if last >= frame_count:
+            raise ValueError(f"frame {part} is outside 0-{frame_count - 1}")
+        indexes += range(first, last + 1)
+    if len(indexes) > limit:
+        raise ValueError(f"frame {frame} names {len(indexes)} frames, more than the {limit} one "
+                         f"call shows; page with N-M, list frames such as 0,10,20, or omit "
+                         f"frame for {limit} spread across the loop")
+    return indexes
+
+
+def _labels(indexes: list[int], frame_count: int) -> list[str] | None:
+    """What the picture calls each frame it shows: its index, whenever there is more than one."""
+    return [f"frame {i}" for i in indexes] if frame_count > 1 else None
+
+
+def _picture(images: list[Image.Image], labels: list[str] | None) -> ImageContent:
     """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom."""
     png = io.BytesIO()
-    contact_sheet(images, scale=PICTURE_SCALE, gap=PICTURE_GAP).save(png, format="PNG")
+    sheet = contact_sheet(images, scale=PICTURE_SCALE, gap=PICTURE_GAP, labels=labels)
+    sheet.save(png, format="PNG")
     return ImageContent(type="image", data=base64.b64encode(png.getvalue()).decode("ascii"),
                         mimeType="image/png")
 
 
-def _shown(payload: dict[str, Any], images: list[Image.Image]) -> dict[str, Any] | CallToolResult:
+def _shown(
+    payload: dict[str, Any], images: list[Image.Image], labels: list[str] | None = None
+) -> dict[str, Any] | CallToolResult:
     """A result as JSON, followed by a picture of its frames when there are any."""
     if not images:
         return payload
     return CallToolResult(
         content=[
             TextContent(type="text", text=json.dumps(payload, indent=2, ensure_ascii=False)),
-            _picture(images),
+            _picture(images, labels),
         ],
         structuredContent=payload,
     )
@@ -294,9 +330,10 @@ def _shown(payload: dict[str, Any], images: list[Image.Image]) -> dict[str, Any]
 def _rendered(
     noun: str, bundle: FrameBundle, frame: str, style: str, picture: bool
 ) -> dict[str, Any] | CallToolResult:
-    indexes, problem = _frames(bundle, frame)
-    if problem:
-        return _usage("render", noun, problem)
+    try:
+        indexes = select_frames(frame, len(bundle.frames))
+    except ValueError as exc:
+        return _usage("render", noun, str(exc))
     images = bundle.to_images()
     payload = {
         "noun": noun,
@@ -314,7 +351,19 @@ def _rendered(
             for i in indexes
         ],
     }
-    return _shown(payload, [images[i] for i in indexes] if picture else [])
+    shown = [images[i] for i in indexes] if picture else []
+    return _shown(payload, shown, _labels(indexes, len(bundle.frames)))
+
+
+def _file_problem(verb: str, noun: str, path: str) -> CallToolResult | None:
+    """What stops a noun reading its file: no path, a relative one, or nothing there."""
+    if not path:
+        return _usage(verb, noun, "needs path")
+    if not Path(path).is_absolute():
+        return _usage(verb, noun, f"path must be absolute, not {path!r}")
+    if not Path(path).exists():
+        return _fail({"error": f"File not found: {path}"})
+    return None
 
 
 def _compile(
@@ -330,7 +379,7 @@ def _compile(
     fit: str = "contain",
     dither: str = "",
     key_color: str = "",
-    frame_ms: int = 200,
+    frame_ms: int = 0,
     scene: Mapping[str, Any] | None = None,
 ) -> FrameBundle | CallToolResult:
     """The bundle a noun's content compiles to: what render shows and plan sends."""
@@ -351,13 +400,24 @@ def _compile(
         if noun == "draw":
             if not value.strip():
                 return _usage(verb, noun, "needs value, the frames drawn as text")
+            frame_ms = frame_ms or FRAME_MS
             if frame_ms <= 0:
                 return _usage(verb, noun, "frame_ms must be positive")
             return compile_drawing(value, profile.width, profile.height, foreground=foreground,
                                    frame_ms=frame_ms, max_frames=_frame_budget(profile))
         if noun == "scene":
-            if not isinstance(scene, Mapping) or not scene:
-                return _usage(verb, noun, "needs scene: its sprites and where to place them")
+            if path:
+                if scene:
+                    return _usage(verb, noun, "give scene or path, not both")
+                problem = _file_problem(verb, noun, path)
+                if problem:
+                    return problem
+                scene, held = load_scene_file(path, frame_ms=FRAME_MS)
+                frame_ms = frame_ms or held
+            elif not isinstance(scene, Mapping) or not scene:
+                return _usage(verb, noun, "needs scene, its sprites and where to place them, "
+                                          "or path, a scene file")
+            frame_ms = frame_ms or FRAME_MS
             if frame_ms <= 0:
                 return _usage(verb, noun, "frame_ms must be positive")
             return compile_scene(scene, profile.width, profile.height, frame_ms=frame_ms,
@@ -370,12 +430,9 @@ def _compile(
                 "checker": studio.create_checker_bundle,
                 "two-frame": studio.create_two_frame_bundle,
             }[value]()
-        if not path:
-            return _usage(verb, noun, "needs path")
-        if not Path(path).is_absolute():
-            return _usage(verb, noun, f"path must be absolute, not {path!r}")
-        if not Path(path).exists():
-            return _fail({"error": f"File not found: {path}"})
+        problem = _file_problem(verb, noun, path)
+        if problem:
+            return problem
         if noun == "bundle":
             return FrameBundle.load(path)
         if fit not in FIT_MODES:
@@ -422,9 +479,10 @@ def describe(
             "mono": {".": "off", "#": "lit, any color"},
             "auto": "mono when a frame lights at most one color, color otherwise",
             "draw": "reads the same characters, either case; '#' lights its foreground",
-            "scene": "sprites use them too, but '.' is transparent, 'K' paints off over "
-                     "whatever lies beneath, and any other letter takes the color its "
-                     "placement gives it",
+            "scene": "a sprite's legend letters keep their own colors; '.' is transparent and "
+                     "'K' paints off over whatever lies beneath; a letter outside the legend, "
+                     "such as X, has no color until its placement's colors gives it one, and "
+                     "colors may recolor legend letters and K too",
             "rows": "spaces around a row are ignored, so pad with '.', and every row of a "
                     "frame or a sprite must be as wide as the first",
         }
@@ -458,11 +516,11 @@ def render(
     fit: Fit = "contain",
     dither: Dither = "",
     key_color: KeyColor = "",
-    frame_ms: FrameMs = 200,
+    frame_ms: FrameMs = 0,
     scene: Scene = None,
-    frame: Annotated[str, Field(description=f"Which frames: N, N-M or all; omit for the first {MAX_FRAMES_PER_CALL}.")] = "",
+    frame: Annotated[str, Field(description=f"Which frames: N, N-M, all, or a comma-separated list of those, such as 0,8,16,24,32, at most {MAX_FRAMES_PER_CALL}; omit for {MAX_FRAMES_PER_CALL} spread evenly across the loop.")] = "",
     style: Annotated[str, Field(description="auto, color (a letter per color) or mono (# for lit).")] = "auto",
-    picture: Annotated[bool, Field(description="Also return the frames as one picture, scaled up on a pixel grid and stacked top to bottom; turn off for a client that cannot show images.")] = True,
+    picture: Annotated[bool, Field(description="Also return the frames as one picture, scaled up on a pixel grid and stacked top to bottom, each frame of a loop labeled with its index; turn off for a client that cannot show images.")] = True,
 ) -> dict[str, Any]:
     """CoolLED panel: compile content exactly as the panel would show it and
     return each frame as text, one character per pixel, and as a picture.
@@ -502,9 +560,10 @@ class _Prepared:
     profile: DeviceProfile
     headline: str
     preview: dict[str, Any]
-    images: list[Image.Image]
+    images: list[Image.Image]  # every frame the bundle plays, or the one banner
     deliver: Callable[[bool, ProgressCallback | None], Awaitable[dict[str, Any]]]
     warnings: list[str] = field(default_factory=list)
+    banner: bool = False
 
 
 def _arguments(noun: str, given: Mapping[str, Any]) -> dict[str, Any] | CallToolResult:
@@ -604,6 +663,7 @@ def _prepare(arguments: dict[str, Any]) -> _Prepared | CallToolResult:
             preview=_banner_preview(banner),
             images=[banner.crop((0, 0, min(banner.width, MAX_BANNER_PREVIEW), banner.height))],
             deliver=deliver_banner,
+            banner=True,
         )
 
     settings = {name: value for name, value in arguments.items() if name not in ("noun", "speed")}
@@ -614,12 +674,12 @@ def _prepare(arguments: dict[str, Any]) -> _Prepared | CallToolResult:
     def deliver_bundle(execute: bool, progress: ProgressCallback | None):
         return runtime.upload_frame_bundle(bundle, execute=execute, progress=progress)
 
-    subject = {
+    subject = Path(arguments["path"]).name if arguments.get("path") else {
         "text": repr(arguments.get("value")),
         "draw": "the drawing",
         "scene": "the scene",
         "pattern": f"the {arguments.get('value')} pattern",
-    }.get(noun) or Path(arguments["path"]).name
+    }[noun]
     count = len(bundle.frames)
     headline = (
         f"Show {subject} on {panel} as a still"
@@ -640,7 +700,7 @@ def _prepare(arguments: dict[str, Any]) -> _Prepared | CallToolResult:
         profile=profile,
         headline=headline,
         preview=_bundle_preview(bundle),
-        images=bundle.to_images()[:MAX_FRAMES_PER_CALL],
+        images=bundle.to_images(),
         deliver=deliver_bundle,
         warnings=warnings,
     )
@@ -761,9 +821,10 @@ async def plan(
     fit: Fit = "contain",
     dither: Dither = "",
     key_color: KeyColor = "",
-    frame_ms: FrameMs = 200,
+    frame_ms: FrameMs = 0,
     scene: Scene = None,
-    picture: Annotated[bool, Field(description="Also return what the panel would show as a picture; turn off for a client that cannot show images.")] = True,
+    frame: Annotated[str, Field(description=f"Which frames the picture shows: N, N-M, all, or a comma-separated list of those, such as 0,8,16,24,32, at most {MAX_FRAMES_PER_CALL}; omit for {MAX_FRAMES_PER_CALL} spread evenly across the loop. It changes nothing that is sent.")] = "",
+    picture: Annotated[bool, Field(description="Also return what the panel would show as a picture, each frame of a loop labeled with its index; turn off for a client that cannot show images.")] = True,
 ) -> dict[str, Any]:
     """CoolLED panel: compile content into the exact packets a send would write,
     without sending. Returns what the panel would show (as a picture and as
@@ -793,7 +854,21 @@ async def plan(
     prepared = _prepare(arguments)
     if isinstance(prepared, CallToolResult):
         return prepared
-    return _shown(await _planned(prepared), prepared.images if picture else [])
+    if prepared.banner and frame:
+        return _usage("plan", noun,
+                      "a scrolling text plan shows its one banner, so frame does not apply")
+    try:
+        indexes = select_frames(frame, len(prepared.images))
+    except ValueError as exc:
+        return _usage("plan", noun, str(exc))
+    planned = await _planned(prepared)
+    if not picture:
+        return planned
+    if prepared.banner:
+        return _shown(planned, prepared.images)
+    planned["preview"] = {**planned["preview"], "pictured_frames": indexes}
+    shown = [prepared.images[i] for i in indexes]
+    return _shown(planned, shown, _labels(indexes, len(prepared.images)))
 
 
 @dataclass(slots=True)
