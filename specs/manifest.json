@@ -10,6 +10,7 @@
     "protocol/transport -> move bytes, honor pacing, gate execute",
     "animation       -> render scenes to transport-neutral frames",
     "sdk/api         -> orchestrate panels, execute gate, tracing",
+    "canvas          -> scenes at their own size, looks for painters, fitting to a panel (design-only)",
     "planning        -> feature board: designed-but-unbuilt cards (design-only)"
   ],
   "modules": [
@@ -53,10 +54,10 @@
       "module": "PixelFramePipeline",
       "file": "PixelFramePipeline.smdl",
       "layer": "animation",
-      "source": "src/opensign/animation (studio/preview)",
-      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (multi-frame 64x16 GIFs; budget pinned at 79 frames 2026-08-15); temporal-colour (FRC) stills confirmed against the ~62 Hz fusion ceiling",
+      "source": "src/opensign/animation (studio/preview/scene)",
+      "status": "compile-only; static render hardware-verified (HELLO, COOL); animation compile confirmed 2026-07-13 (multi-frame 64x16 GIFs; budget pinned at 79 frames 2026-08-15); temporal-color (FRC) stills confirmed against the ~62 Hz fusion ceiling",
       "delegates_to": ["DeviceProfileLedger"],
-      "summary": "Scene, animated source, or a still expanded into a temporal (frame-rate-control) subframe loop -> RGB888 -> fit/orient -> levels -> timeline resample -> palette quantize (or temporal dither) -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
+      "summary": "Scene, sprite scene (sprites placed by coordinate that move, cycle, wrap and flip, its frame count settled against the budget before stamping; given inline or read from a scene file), animated source, or a still expanded into a temporal (frame-rate-control) subframe loop -> RGB888 -> fit/orient -> levels -> timeline resample -> palette quantize (or temporal dither) -> hashed bundle. Compile-only: hands off at the bundle boundary; no encoding, no delivery, no BLE."
     },
     {
       "module": "SignControlService",
@@ -65,16 +66,25 @@
       "source": "src/opensign/sdk/runtime.py + api.py",
       "status": "hardware-verified via runtime path",
       "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "GuardedTransport", "DeviceProfileLedger"],
-      "summary": "Sole cross-module orchestrator: panel registry, global execute gate + per-call override, bounded animated-media ingest, temporal-colour image option, three-truths recording (host/ack/display), tracing, artifacts, and the FastAPI endpoints (/status, /text, /image [static|temporal], /animation, /bundle, /brightness, /power)."
+      "summary": "Sole cross-module orchestrator: panel registry, global execute gate + per-call override, bounded animated-media ingest, temporal-color image option, three-truths recording (host/ack/display), tracing, artifacts, and the FastAPI endpoints (/status, /text, /image [static|temporal], /animation, /bundle, /brightness, /power)."
     },
     {
       "module": "FeatureBoard",
       "file": "FeatureBoard.smdl",
       "layer": "planning",
       "source": "none yet -- design-only backlog; cards graduate into their owning layer spec when built",
-      "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4), F5 pipelined chunk upload (proposed; needs a hardware ack-window test)",
+      "status": "design-only (forge stage: designed). Cards: F1 scroll gap (ready), F2 music-bars visualizer (proposed; 0x01 unverified, needs hardware evidence), F3 image/animation option parity (ready), F4 program as one 0x04 upload (proposed; extends W4), F5 pipelined chunk upload (proposed; needs a hardware ack-window test), F8 anchors, F9 lean results and F16 scrolling-text parity (ready), F10 scene shapes and lettering as brushes, F11 scrolling scenes and F14 layout results (proposed). F6 declared motion, F7 cycles and F13 mirror and erase graduated into PixelFramePipeline (2026-11-02), and F12 scene files followed (2026-11-11); F15 frame selection was built into the coolled-verbs server the same day, where its Functions wait for a layer spec",
       "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService", "DeviceProfileLedger", "GuardedTransport"],
       "summary": "Feature backlog: each card names its entry point, the Functions it needs, its owning layer module, its cost against the measured 30,720-byte / 79-frame 0x04 budget, and its acceptance criteria. Governed by FeatureBoardKernel; nothing here touches the radio."
+    },
+    {
+      "module": "SceneCanvas",
+      "file": "SceneCanvas.smdl",
+      "layer": "canvas",
+      "source": "none yet -- design-only; compose and fit would join PixelFramePipeline, and the workspace (looks, inspection, checked edits) the coolled-verbs server",
+      "status": "design-only (forge stage: designed); its first drawing ran 2026-10-31 (a 384x384 ringed planet, 25 looks) and is kept with its workspace, brushes and records in examples/canvas/ringed-planet; no product code yet",
+      "delegates_to": ["PixelFramePipeline", "CoolLEDXProtocol", "SignControlService"],
+      "summary": "A canvas that is not the panel, and the workspace a painter sees it through: a scene composes at its own size; the painter looks at the whole scaled to one picture or at one region legibly, traces any pixel to the sprite cell that put it there, and changes the file through revision-checked edits with pixel diffs; fitting alone turns a canvas into a still, a banner or a pan for one panel. Pixels stay literal sprite rows; shapes, lettering, rules and patterns are brushes that propose rows from outside the file. Governed by CanvasKernel, and its first drawing by FirstDrawingKernel."
     }
   ],
   "data_flow": [
@@ -117,21 +127,21 @@
     },
     {
       "id": "W6",
-      "title": "Temporal colour (frame-rate control)",
+      "title": "Temporal color (frame-rate control)",
       "modules": ["PixelFramePipeline", "DeviceProfileLedger", "SignControlService"],
-      "outcome": "A still expands into N binarized subframes (spatiotemporal ordered dither) played on 0x04 above the measured ~62 Hz fusion ceiling so per-pixel duty cycle reads as intermediate colour; levels (black/white point) tame dark sources. Implemented (render.temporal_dither_frames/apply_levels, studio.create_temporal_image_bundle, coolled image --temporal/--black-level/--white-level, scripts/flicker_probe.py, tests). Past 16 subframes the 1 ms hold floor cannot keep the loop above fusion; it renders anyway with a warning (studio.temporal_fusion_warning, CLI and API) so the panel can be overdriven on purpose. A per-pixel phase ramp aimed at the line that crawls down the panel near 79 subframes was rejected on hardware (2026-10-29: it draws diagonal streaks; see PixelFramePipeline open_work). Remaining: per-channel perceptual calibration and a target-RGB -> per-channel-duty gamut map, plus recording hardware.flicker_fusion_hz in the profile."
+      "outcome": "A still expands into N binarized subframes (spatiotemporal ordered dither) played on 0x04 above the measured ~62 Hz fusion ceiling so per-pixel duty cycle reads as intermediate color; levels (black/white point) tame dark sources. Implemented (render.temporal_dither_frames/apply_levels, studio.create_temporal_image_bundle, coolled image --temporal/--black-level/--white-level, scripts/flicker_probe.py, tests). Past 16 subframes the 1 ms hold floor cannot keep the loop above fusion; it renders anyway with a warning (studio.temporal_fusion_warning, CLI and API) so the panel can be overdriven on purpose. A per-pixel phase ramp aimed at the line that crawls down the panel near 79 subframes was rejected on hardware (2026-10-29: it draws diagonal streaks; see PixelFramePipeline open_work). Remaining: per-channel perceptual calibration and a target-RGB -> per-channel-duty gamut map, plus recording hardware.flicker_fusion_hz in the profile."
     }
   ],
   "shared_invariants": [
-    "No physical BLE write occurs unless execute=true; otherwise a byte-exact dry-run plan is produced. The flag's default is set at the entry point: the one-shot CLIs (coolled text/image/gif, opensign-send) default execute=true and take --dry-run to opt out, while the long-running API server stays render-only until armed.",
+    "No physical BLE write occurs unless execute=true; otherwise a byte-exact dry-run plan is produced. The flag's default is set at the entry point: the one-shot CLIs (coolled text/image/gif/scene, opensign-send) default execute=true and take --dry-run to opt out, while the long-running API server stays render-only until armed.",
     "A claim never advances status without appended evidence citing a source; verified requires live-hardware evidence.",
     "Codec selection is gated on allow_experimental, not on write-vs-plan: verified-only when false (the opt-in strict gate, which also requires replay_safe), verified+experimental when true; the runtime selects with allow_experimental=true for both dry-run and live delivery so a controlled live test can promote experimental toward verified.",
     "Host write success, per-chunk ack telemetry, and observed display confirmation are three separate truths.",
     "Rendering is transport-neutral; only the device codec knows the wire format; only the transport touches the radio.",
     "PixelFramePipeline compiles bundles only; SignControlService is the sole cross-module orchestrator (compile -> encode -> deliver).",
-    "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device colour knowledge never leaks into compilation.",
+    "The display palette is derived from the profile color_mode by DeviceProfileLedger and handed to the renderer; device color knowledge never leaks into compilation.",
     "static_image (0x03) and stored_animation (0x04) are independent claims; animation is preflighted against the measured 30 KiB device payload limit, header included (79 frames at 64x16), plus the structural caps (frame_count <= 255; 16-bit payload) and rejected rather than truncated.",
-    "The native single-frame palette and the temporal-FRC perceived gamut are distinct: temporal dithering time-averages native colours into a larger but luminance-limited perceived volume, never a new single-frame colour.",
+    "The native single-frame palette and the temporal-FRC perceived gamut are distinct: temporal dithering time-averages native colors into a larger but luminance-limited perceived volume, never a new single-frame color.",
     "The flicker-fusion ceiling is a measured, evidence-backed device fact; a temporal (FRC) loop is timed above it where it can be (N * speed_ms <= 1000 / fusion_hz), or it reads as visible flicker instead of a fused tone. A loop that cannot be (more than 16 subframes at 62 Hz) is warned about, never refused, so the panel can be overdriven on purpose."
   ]
 }

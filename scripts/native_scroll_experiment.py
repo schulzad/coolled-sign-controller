@@ -106,7 +106,7 @@ def parse_speeds(raw: str | None) -> list[int]:
 def render_wide_text(text: str, height: int, *, fg: str, bg: str, font_size: int) -> Image.Image:
     """Render ``text`` to a single wide RGB bitmap of the panel height.
 
-    Natural width (however wide the glyphs need), vertically centred. This is
+    Natural width (however wide the glyphs need), vertically centered. This is
     the whole banner -- the firmware, not us, is responsible for marching it
     across the panel -- so unlike a scroll flipbook the cost is one image no
     matter how long the phrase.

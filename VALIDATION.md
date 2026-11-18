@@ -17,11 +17,11 @@ Environment: Python 3.12.2 on macOS (Darwin 25.5.0).
 
 ## Hardware validation (reference panel)
 
-Verified against **CoolLEDX, 64x16, 7-colour, firmware 6** (BLE MAC
+Verified against **CoolLEDX, 64x16, 7-color, firmware 6** (BLE MAC
 `ff:00:00:06:6f:82`); evidence is recorded in `device_profile.local.json` and
 `protocol.md`.
 
-- Read-only discovery: advertisement + manufacturer-data decode (64x16, 7-colour,
+- Read-only discovery: advertisement + manufacturer-data decode (64x16, 7-color,
   fw6) and GATT enumeration (single `FFF0` service, one `FFF1` write/notify/read
   characteristic).
 - Brightness (`0x08`), static image (`0x03`), and stored animation (`0x04`)

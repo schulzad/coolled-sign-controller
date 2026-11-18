@@ -1,0 +1,8 @@
+First drawing: plan, written before the first look.
+
+Subject: a ringed gas giant rising over the horizon of a small airless moon, seen from its surface. Canvas 384x384, the panel's 8 colours.
+The whole: the planet enormous and right of centre, most of the way risen, its rings tilted up to the left and running off the right edge; black sky and stars above; the moon's curved horizon across the lower quarter; a lander and a tiny astronaut at lower left, looking up.
+Light: the sun is off the upper left, so every sphere is gibbous with its night side to the lower right, the rings throw a shadow on the planet, the planet throws one on the rings, and ground shadows fall to the right.
+Coarse: brushes bake the block-ins (planet bands, night side, ring halves, shadows, ground, stars) into plain rows, marked block_in, in draw order: stars, back ring, planet, night, ring shadow, front ring, ground.
+Fine, by hand: a storm and band detail on the planet, craters and boulders, the lander with lit windows and a beacon, the astronaut with a glowing visor, footprints between them, a small second moon.
+The feel: quiet and vast; the planet fills the sky over one small figure.

@@ -1,6 +1,6 @@
 # Roadmap against the initial acceptance criteria
 
-Reference panel: CoolLEDX, 64x16, 7-colour, firmware 6 (`ff:00:00:06:6f:82`).
+Reference panel: CoolLEDX, 64x16, 7-color, firmware 6 (`ff:00:00:06:6f:82`).
 
 | Criterion | Status |
 |---|---|

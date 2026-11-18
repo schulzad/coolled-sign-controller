@@ -1,66 +1,180 @@
 """
-coolled-verbs: a read-only MCP render surface for the panel, as verbs that take nouns.
+coolled-verbs: an MCP surface for the panel, as verbs that take nouns.
 
-Modelled on smdl-factory's smdl-verbs spike: a verb called with no noun returns
+Modeled on smdl-factory's smdl-verbs spike: a verb called with no noun returns
 its nouns, failures come back flagged isError with the usage, and every path
 must be absolute. describe reads the panel; render compiles content through the
 same PixelAnimationStudio the CLI and API use and returns each frame as text,
-one character per pixel. Nothing here encodes, connects or writes: the panel
-never lights from this server.
+one character per pixel, and its draw noun reads frames written that way back.
+plan compiles the same content into the packets a send would write and names
+them with a plan_id; accept sends a plan_id's packets, and only when the server
+was started with --execute. Without --execute nothing here connects or writes.
 
 Run:
-    opensign-verbs --profile device_profile.local.json
+    opensign-verbs --profile device_profile.local.json [--execute]
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import base64
+import hashlib
+import io
 import json
 import logging
+import re
+import time
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
+from PIL import Image, ImageChops
 from pydantic import Field
 
-from opensign.animation.preview import TEXT_LEGEND, TEXT_STYLES, text_preview
+from opensign.animation.cache import default_render_cache_dir
+from opensign.animation.preview import TEXT_LEGEND, TEXT_STYLES, contact_sheet, text_preview
+from opensign.animation.render import parse_color, render_static_text, render_wide_text
+from opensign.animation.scene import compile_drawing, compile_scene, load_scene_file
 from opensign.animation.studio import PixelAnimationStudio
 from opensign.contracts import DeviceProfile, FrameBundle
-from opensign.protocol.codecs.coolledx import PIXEL_BYTES_MAX
+from opensign.protocol.codec import CodecError
+from opensign.protocol.codecs.coolledx import (
+    MODE_LEFT,
+    PIXEL_BYTES_MAX,
+    USER_SCROLL_SPEED_MAX,
+    USER_SCROLL_SPEED_MIN,
+)
+from opensign.protocol.runtime import ProtocolRuntime
+from opensign.protocol.transport import ProgressCallback
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+# accept replaces what the panel shows, and sending one plan twice leaves it the same.
+SENDS = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
+)
 
-# The most frames one render returns as text; a longer clip is paged with frame.
+# The most frames one render or plan shows; a longer clip is spread across, or paged with frame.
 MAX_FRAMES_PER_CALL = 8
+
+# How long a drawn or scene frame shows when neither the call nor a scene file says.
+FRAME_MS = 200
+
+# The widest native-scroll banner a plan shows as text; the panel still gets all of it.
+MAX_BANNER_PREVIEW = 256
+
+# A picture draws each LED this many pixels wide, and leaves this gap between frames.
+PICTURE_SCALE = 8
+PICTURE_GAP = 6
+
+# How long accept waits on an upload before leaving it to finish in the background,
+# kept well inside the time an MCP client gives one call.
+ACCEPT_WAIT_SECONDS = 25.0
+
+# How many recent plans accept can find from a plan_id alone.
+MAX_REMEMBERED_PLANS = 32
 
 DEFAULT_PROFILE = Path("device_profile.local.json")
 STARTER_PROFILE = Path("device_profile.json")
+
+READ_ONLY_BLOCKER = (
+    "this server was started without --execute, so accept will not send; "
+    "add --execute to its arguments to let it"
+)
 
 logging.getLogger("mcp").setLevel(logging.ERROR)
 
 mcp = FastMCP(
     "coolled-verbs",
     instructions=(
-        "A read-only render surface for a CoolLEDX LED panel. Call a verb with no noun "
-        "to see its nouns and their arguments. describe panel gives the geometry and "
-        "colours; render compiles text, a pattern, an image, an animation or a frame "
-        "bundle exactly as the panel would show it and returns each frame as text, one "
+        "A render and send surface for a CoolLEDX LED panel. Call a verb with no noun "
+        "to see its nouns and their arguments. describe panel gives the geometry, the "
+        "colors and how many frames one upload holds; render compiles text, a drawing, "
+        "a scene, a pattern, an image, an animation or a frame bundle exactly as the "
+        "panel would show it, and returns each frame as a picture and as text, one "
         "character per pixel: '.' is off, and either '#' marks a lit pixel (mono) or a "
-        "letter names its colour (describe legend). Nothing is sent to the panel. Every "
-        "path must be absolute."
+        "letter names its color (describe legend). A loop longer than eight frames shows "
+        "eight spread across it, and frame names others, such as 0,8,16. The draw noun "
+        "reads whole frames written that way; the scene noun places small sprites written "
+        "that way at x,y, which is easier to get right than whole frames, and lets a "
+        "sprite move, cycle and flip from frame to frame without writing each frame out; "
+        "a scene saved as a JSON file goes by path instead of inline. plan compiles "
+        "content into the packets a send would write, without sending, and returns a "
+        "plan_id; accept sends a plan_id, and only when the server was started with "
+        "--execute (describe panel says whether it was). Every path must be absolute."
     ),
 )
+
+# plan noun -> (the arguments it reads, the first one required, or path in its place when
+# it reads path too; what it sends)
+PLANS: dict[str, tuple[tuple[str, ...], str]] = {
+    "text": (
+        ("value", "scroll", "speed", "foreground", "background"),
+        "text as a still, or with scroll as one wide banner the panel's own firmware scrolls",
+    ),
+    "draw": (
+        ("value", "foreground", "frame_ms"),
+        "frames drawn as text, read the way render draw reads them",
+    ),
+    "scene": (
+        ("scene", "path", "frame_ms"),
+        "sprites placed at x,y, as a still, one frame per entry of frames, or items that "
+        "move and cycle; inline, or a scene file by path",
+    ),
+    "pattern": (("value",), "a built-in pattern: test, checker or two-frame"),
+    "image": (("path", "fit", "dither"), "an image fitted and quantized to the panel"),
+    "animation": (
+        ("path", "fit", "dither", "key_color", "scroll", "background"),
+        "an animated GIF, WebP or APNG, in place or side-scrolling",
+    ),
+    "bundle": (("path",), "a saved frame bundle (.json)"),
+}
+
+# The value each plan argument takes when a plan's arguments leave it out.
+PLAN_DEFAULTS: dict[str, Any] = {
+    "value": "",
+    "path": "",
+    "scroll": False,
+    "speed": 8,
+    "foreground": "white",
+    "background": "black",
+    "fit": "contain",
+    "dither": "",
+    "key_color": "",
+    "frame_ms": 0,
+    "scene": {},
+}
+
+
+def _plan_usage(names: tuple[str, ...]) -> str:
+    first, rest = names[0], [name for name in names[1:] if name != "path"]
+    if "path" in names[1:]:
+        first += "|path"
+    return " ".join([first, *(f"[{name}]" for name in [*rest, "frame"])])
+
 
 # verb -> noun -> (arguments, what it returns)
 NOUNS: dict[str, dict[str, tuple[str, str]]] = {
     "describe": {
-        "panel": ("", "the panel's id, geometry, colour mode and capability statuses"),
-        "legend": ("", "the character each panel colour renders as"),
+        "panel": ("", "the panel's id, geometry, color mode, capability statuses, "
+                      "how many frames one upload holds, and whether accept sends"),
+        "legend": ("", "the character each panel color renders as, which draw reads back"),
+        "upload": ("", "the upload accept started last: its progress, then how it ended"),
     },
     "render": {
         "text": ("value [scroll] [foreground] [background] [frame] [style]",
                  "text as the panel shows it, static or as a host-side scroll"),
+        "draw": ("value [foreground] [frame_ms] [frame] [style]",
+                 "frames drawn as text, one character per pixel, each centered on the "
+                 "panel; a blank line starts the next frame"),
+        "scene": ("scene|path [frame_ms] [frame] [style]",
+                  "small sprites drawn as text and placed at x,y, recolored and flipped "
+                  "per copy; a still, one frame per entry of frames, or items that move "
+                  "and cycle; inline, or a scene file by path"),
         "pattern": ("value [frame] [style]", "a built-in pattern: test, checker or two-frame"),
         "image": ("path [fit] [dither] [style]", "an image fitted and quantized to the panel"),
         "animation": ("path [fit] [dither] [key_color] [scroll] [background] [frame] [style]",
@@ -68,11 +182,32 @@ NOUNS: dict[str, dict[str, tuple[str, str]]] = {
                       "side-scrolling"),
         "bundle": ("path [frame] [style]", "a saved frame bundle (.json)"),
     },
+    "plan": {noun: (_plan_usage(names), sends) for noun, (names, sends) in PLANS.items()},
+}
+
+ACCEPT_USAGE: dict[str, str] = {
+    "verb": "accept",
+    "args": "plan_id [arguments]",
+    "returns": "the upload: sent, failed, or still uploading in the background "
+               "(describe upload follows it)",
+    "how": "plan first, then pass its plan_id; arguments are only needed for a plan "
+           "the server no longer remembers",
 }
 
 PATTERNS = ("test", "checker", "two-frame")
 FIT_MODES = {"contain": "contain", "cover": "cover", "fill": "stretch", "stretch": "stretch"}
 DITHERS = ("none", "ordered", "floyd")
+
+# Arguments render and plan share.
+Value = Annotated[str, Field(description="text: the message. pattern: test, checker or two-frame. draw: the frames, one character per pixel (describe legend), at most the panel's size; a blank line starts the next frame.")]
+FilePath = Annotated[str, Field(description="image, animation, bundle or scene: the file, as an absolute path. A scene file is the object scene takes, saved as JSON, and may carry its own frame_ms.")]
+Foreground = Annotated[str, Field(description="text: a color name or #rrggbb. draw: the color '#' lights.")]
+Background = Annotated[str, Field(description="text or animation: a color name or #rrggbb.")]
+Fit = Annotated[str, Field(description="image or animation: contain, cover or fill (stretch is an alias).")]
+Dither = Annotated[str, Field(description="image or animation: none, ordered or floyd; omit for none on an image and ordered on an animation.")]
+KeyColor = Annotated[str, Field(description="animation only: a color to knock out to black, or auto to sample it from the frame border.")]
+FrameMs = Annotated[int, Field(description=f"draw or scene: how long each frame shows, in milliseconds; omit for a scene file's own frame_ms, or else {FRAME_MS}.")]
+Scene = Annotated[dict[str, Any] | None, Field(description='scene only: {"sprites": {"name": ["rows", ...]}, "items": [{"sprite": "name", "at": [x, y], "colors": {"X": "cyan"}}], "frames": [[placements], ...], "length": frames}. A sprite is a small drawing in the legend: its legend letters keep their own colors, "." is transparent, K paints off over whatever lies beneath, and a letter outside the legend, such as X, has no color until each placement\'s colors gives it one (colors may recolor legend letters and K too). at is the sprite\'s top-left corner on the panel and may hang off its edges; "mirror": "x" or "y" flips a placement; later placements draw on top. items appear in every frame, and each entry of frames adds its own placements on top of them. An item can also change from frame to frame: "sprite": ["open", "shut"] shows one name per frame and "cycle": [[x, y], ...] one position per frame in place of at, both repeating, and "move": [dx, dy] steps it that far each frame, coming back in at the opposite edge with "wrap": true. The scene runs for length frames, or else for the least common multiple of its frames list, every list an item repeats and every wrapping item\'s trip round the panel, and is refused past what one upload holds. Saved as JSON, the same object is a scene file, which path takes in place of scene.')]
 
 
 def _noun(verb: str, description: str) -> Any:
@@ -108,6 +243,7 @@ def _usage(verb: str, noun: str, problem: str) -> CallToolResult:
 
 
 _profile_path: Path = DEFAULT_PROFILE
+_execute: bool = False
 
 
 def _profile() -> DeviceProfile:
@@ -124,34 +260,82 @@ def _frame_budget(profile: DeviceProfile) -> int:
     return PIXEL_BYTES_MAX // max(1, profile.width * profile.height * 3 // 8)
 
 
-def _frames(bundle: FrameBundle, frame: str) -> tuple[list[int], str | None]:
-    """The frame indexes to return, or what is wrong with frame."""
-    count = len(bundle.frames)
-    if frame == "":
-        return list(range(min(count, MAX_FRAMES_PER_CALL))), None
-    if frame == "all":
-        if count > MAX_FRAMES_PER_CALL:
-            return [], (f"the bundle has {count} frames, more than the {MAX_FRAMES_PER_CALL} "
-                        "one call returns; page with frame=N or frame=N-M")
-        return list(range(count)), None
+def sample_frames(frame_count: int, limit: int = MAX_FRAMES_PER_CALL) -> list[int]:
+    """Frames spread evenly across a loop, the first always among them: every frame of a
+    loop no longer than limit, and 0, 5, 10 ... 35 as eight of a 40-frame loop."""
+    if frame_count <= limit:
+        return list(range(frame_count))
+    return [i * frame_count // limit for i in range(limit)]
+
+
+def select_frames(frame: str, frame_count: int, limit: int = MAX_FRAMES_PER_CALL) -> list[int]:
+    """The frames a result shows: the ones frame names, as N, N-M or all, or a comma-separated
+    list of those, in the order given; or sample_frames's spread when it names none.
+
+    Raises ValueError saying what is wrong, as in ``frame 41 is outside 0-39``.
+    """
+    if not frame.strip():
+        return sample_frames(frame_count, limit)
+    indexes: list[int] = []
+    for part in (part.strip() for part in frame.split(",")):
+        if part == "all":
+            indexes += range(frame_count)
+            continue
+        named = re.fullmatch(r"(\d+)(?:\s*-\s*(\d+))?", part)
+        if named is None:
+            raise ValueError(f"frame must be N, N-M, all, or a comma-separated list of those, "
+                             f"such as 0,8,16-18; not {frame!r}")
+        first, last = int(named[1]), int(named[2] or named[1])
+        if first > last:
+            raise ValueError(f"frame {part} runs backwards; write {last}-{first}")
+        if last >= frame_count:
+            raise ValueError(f"frame {part} is outside 0-{frame_count - 1}")
+        indexes += range(first, last + 1)
+    if len(indexes) > limit:
+        raise ValueError(f"frame {frame} names {len(indexes)} frames, more than the {limit} one "
+                         f"call shows; page with N-M, list frames such as 0,10,20, or omit "
+                         f"frame for {limit} spread across the loop")
+    return indexes
+
+
+def _labels(indexes: list[int], frame_count: int) -> list[str] | None:
+    """What the picture calls each frame it shows: its index, whenever there is more than one."""
+    return [f"frame {i}" for i in indexes] if frame_count > 1 else None
+
+
+def _picture(images: list[Image.Image], labels: list[str] | None) -> ImageContent:
+    """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom."""
+    png = io.BytesIO()
+    sheet = contact_sheet(images, scale=PICTURE_SCALE, gap=PICTURE_GAP, labels=labels)
+    sheet.save(png, format="PNG")
+    return ImageContent(type="image", data=base64.b64encode(png.getvalue()).decode("ascii"),
+                        mimeType="image/png")
+
+
+def _shown(
+    payload: dict[str, Any], images: list[Image.Image], labels: list[str] | None = None
+) -> dict[str, Any] | CallToolResult:
+    """A result as JSON, followed by a picture of its frames when there are any."""
+    if not images:
+        return payload
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(payload, indent=2, ensure_ascii=False)),
+            _picture(images, labels),
+        ],
+        structuredContent=payload,
+    )
+
+
+def _rendered(
+    noun: str, bundle: FrameBundle, frame: str, style: str, picture: bool
+) -> dict[str, Any] | CallToolResult:
     try:
-        start, _, end = frame.partition("-")
-        first, last = int(start), int(end or start)
-    except ValueError:
-        return [], f"frame must be N, N-M or all, not {frame!r}"
-    if not 0 <= first <= last < count:
-        return [], f"frame {frame} is outside 0-{count - 1}"
-    if last - first + 1 > MAX_FRAMES_PER_CALL:
-        return [], f"one call returns at most {MAX_FRAMES_PER_CALL} frames"
-    return list(range(first, last + 1)), None
-
-
-def _rendered(noun: str, bundle: FrameBundle, frame: str, style: str) -> dict[str, Any] | CallToolResult:
-    indexes, problem = _frames(bundle, frame)
-    if problem:
-        return _usage("render", noun, problem)
+        indexes = select_frames(frame, len(bundle.frames))
+    except ValueError as exc:
+        return _usage("render", noun, str(exc))
     images = bundle.to_images()
-    return {
+    payload = {
         "noun": noun,
         "width": bundle.width,
         "height": bundle.height,
@@ -167,14 +351,122 @@ def _rendered(noun: str, bundle: FrameBundle, frame: str, style: str) -> dict[st
             for i in indexes
         ],
     }
+    shown = [images[i] for i in indexes] if picture else []
+    return _shown(payload, shown, _labels(indexes, len(bundle.frames)))
+
+
+def _file_problem(verb: str, noun: str, path: str) -> CallToolResult | None:
+    """What stops a noun reading its file: no path, a relative one, or nothing there."""
+    if not path:
+        return _usage(verb, noun, "needs path")
+    if not Path(path).is_absolute():
+        return _usage(verb, noun, f"path must be absolute, not {path!r}")
+    if not Path(path).exists():
+        return _fail({"error": f"File not found: {path}"})
+    return None
+
+
+def _compile(
+    verb: str,
+    noun: str,
+    profile: DeviceProfile,
+    *,
+    value: str = "",
+    path: str = "",
+    scroll: bool = False,
+    foreground: str = "white",
+    background: str = "black",
+    fit: str = "contain",
+    dither: str = "",
+    key_color: str = "",
+    frame_ms: int = 0,
+    scene: Mapping[str, Any] | None = None,
+) -> FrameBundle | CallToolResult:
+    """The bundle a noun's content compiles to: what render shows and plan sends."""
+    dither = dither or ("ordered" if noun == "animation" else "none")
+    studio = PixelAnimationStudio(profile.width, profile.height)
+    budget = _frame_budget(profile)
+    try:
+        if noun == "text":
+            if not value:
+                return _usage(verb, noun, "needs value")
+            return studio.create_text_bundle(
+                value,
+                scroll=scroll,
+                foreground=foreground,
+                background=background,
+                max_frames=budget if scroll else None,
+            )
+        if noun == "draw":
+            if not value.strip():
+                return _usage(verb, noun, "needs value, the frames drawn as text")
+            frame_ms = frame_ms or FRAME_MS
+            if frame_ms <= 0:
+                return _usage(verb, noun, "frame_ms must be positive")
+            return compile_drawing(value, profile.width, profile.height, foreground=foreground,
+                                   frame_ms=frame_ms, max_frames=_frame_budget(profile))
+        if noun == "scene":
+            if path:
+                if scene:
+                    return _usage(verb, noun, "give scene or path, not both")
+                problem = _file_problem(verb, noun, path)
+                if problem:
+                    return problem
+                scene, held = load_scene_file(path, frame_ms=FRAME_MS)
+                frame_ms = frame_ms or held
+            elif not isinstance(scene, Mapping) or not scene:
+                return _usage(verb, noun, "needs scene, its sprites and where to place them, "
+                                          "or path, a scene file")
+            frame_ms = frame_ms or FRAME_MS
+            if frame_ms <= 0:
+                return _usage(verb, noun, "frame_ms must be positive")
+            return compile_scene(scene, profile.width, profile.height, frame_ms=frame_ms,
+                                 max_frames=_frame_budget(profile))
+        if noun == "pattern":
+            if value not in PATTERNS:
+                return _usage(verb, noun, f"value must be one of {', '.join(PATTERNS)}")
+            return {
+                "test": studio.create_test_pattern_bundle,
+                "checker": studio.create_checker_bundle,
+                "two-frame": studio.create_two_frame_bundle,
+            }[value]()
+        problem = _file_problem(verb, noun, path)
+        if problem:
+            return problem
+        if noun == "bundle":
+            return FrameBundle.load(path)
+        if fit not in FIT_MODES:
+            return _usage(verb, noun, f"fit must be one of {', '.join(FIT_MODES)}")
+        if dither not in DITHERS:
+            return _usage(verb, noun, f"dither must be one of {', '.join(DITHERS)}")
+        if noun == "image":
+            return studio.create_image_bundle(path, fit_mode=FIT_MODES[fit], dither=dither)
+        if scroll:
+            return studio.create_scrolling_gif_bundle(
+                path,
+                max_frames=budget,
+                background=background,
+                dither=dither,
+                key_color=key_color or None,
+            )
+        return studio.create_gif_bundle(
+            path,
+            max_frames=budget,
+            fit_mode=FIT_MODES[fit],
+            background=background,
+            dither=dither,
+            key_color=key_color or None,
+        )
+    except (ValueError, OSError) as exc:
+        return _fail({"error": f"{verb} {noun}: {exc}"})
 
 
 @mcp.tool(annotations=READ_ONLY)
 def describe(
     noun: Annotated[str, _noun("describe", "What to describe; omit to list the nouns.")] = "",
 ) -> dict[str, Any]:
-    """CoolLED panel: read the panel this server renders for, or the text
-    legend. Call with no noun for the list of nouns."""
+    """CoolLED panel: read the panel this server renders for, the text legend,
+    or the last upload. Call with no noun for the list of nouns."""
     if not noun:
         return _listing("describe")
     if noun not in NOUNS["describe"]:
@@ -184,9 +476,21 @@ def describe(
         return {
             "noun": noun,
             "color": {char: name for char, name in zip(TEXT_LEGEND.values(), names, strict=True)},
-            "mono": {".": "off", "#": "lit, any colour"},
-            "auto": "mono when a frame lights at most one colour, color otherwise",
+            "mono": {".": "off", "#": "lit, any color"},
+            "auto": "mono when a frame lights at most one color, color otherwise",
+            "draw": "reads the same characters, either case; '#' lights its foreground",
+            "scene": "a sprite's legend letters keep their own colors; '.' is transparent and "
+                     "'K' paints off over whatever lies beneath; a letter outside the legend, "
+                     "such as X, has no color until its placement's colors gives it one, and "
+                     "colors may recolor legend letters and K too",
+            "rows": "spaces around a row are ignored, so pad with '.', and every row of a "
+                    "frame or a sprite must be as wide as the first",
         }
+    if noun == "upload":
+        if _upload is None:
+            return {"noun": noun, "state": "idle",
+                    "note": "nothing has been accepted since this server started"}
+        return {"noun": noun, **_upload.report()}
     profile = _profile()
     return {
         "noun": noun,
@@ -196,98 +500,502 @@ def describe(
         "height": profile.height,
         "colors": 8,
         "capabilities": profile.get("capabilities", {}),
+        "frames_per_upload": _frame_budget(profile),
+        "accept_sends": _execute,
     }
 
 
 @mcp.tool(annotations=READ_ONLY)
 def render(
     noun: Annotated[str, _noun("render", "What to render; omit to list the nouns.")] = "",
-    value: Annotated[str, Field(description="text: the message. pattern: test, checker or two-frame.")] = "",
-    path: Annotated[str, Field(description="image, animation or bundle: the file, as an absolute path.")] = "",
+    value: Value = "",
+    path: FilePath = "",
     scroll: Annotated[bool, Field(description="text or animation: scroll across the panel host-side instead of showing in place.")] = False,
-    foreground: Annotated[str, Field(description="text only: a colour name or #rrggbb.")] = "white",
-    background: Annotated[str, Field(description="text or animation: a colour name or #rrggbb.")] = "black",
-    fit: Annotated[str, Field(description="image or animation: contain, cover or fill (stretch is an alias).")] = "contain",
-    dither: Annotated[str, Field(description="image or animation: none, ordered or floyd; omit for none on an image and ordered on an animation.")] = "",
-    key_color: Annotated[str, Field(description="animation only: a colour to knock out to black, or auto to sample it from the frame border.")] = "",
-    frame: Annotated[str, Field(description=f"Which frames: N, N-M or all; omit for the first {MAX_FRAMES_PER_CALL}.")] = "",
-    style: Annotated[str, Field(description="auto, color (a letter per colour) or mono (# for lit).")] = "auto",
+    foreground: Foreground = "white",
+    background: Background = "black",
+    fit: Fit = "contain",
+    dither: Dither = "",
+    key_color: KeyColor = "",
+    frame_ms: FrameMs = 0,
+    scene: Scene = None,
+    frame: Annotated[str, Field(description=f"Which frames: N, N-M, all, or a comma-separated list of those, such as 0,8,16,24,32, at most {MAX_FRAMES_PER_CALL}; omit for {MAX_FRAMES_PER_CALL} spread evenly across the loop.")] = "",
+    style: Annotated[str, Field(description="auto, color (a letter per color) or mono (# for lit).")] = "auto",
+    picture: Annotated[bool, Field(description="Also return the frames as one picture, scaled up on a pixel grid and stacked top to bottom, each frame of a loop labeled with its index; turn off for a client that cannot show images.")] = True,
 ) -> dict[str, Any]:
     """CoolLED panel: compile content exactly as the panel would show it and
-    return each frame as text, one character per pixel. Never sends to the
-    panel. Call with no noun for the list of nouns and their arguments."""
+    return each frame as text, one character per pixel, and as a picture.
+    Never sends to the panel. Call with no noun for the list of nouns and
+    their arguments."""
     if not noun:
         return _listing("render")
     if noun not in NOUNS["render"]:
         return _unknown("render", noun)
     if style not in TEXT_STYLES:
         return _usage("render", noun, f"style must be one of {', '.join(TEXT_STYLES)}")
-    dither = dither or ("ordered" if noun == "animation" else "none")
+    bundle = _compile(
+        "render",
+        noun,
+        _profile(),
+        value=value,
+        path=path,
+        scroll=scroll,
+        foreground=foreground,
+        background=background,
+        fit=fit,
+        dither=dither,
+        key_color=key_color,
+        frame_ms=frame_ms,
+        scene=scene,
+    )
+    if isinstance(bundle, CallToolResult):
+        return bundle
+    return _rendered(noun, bundle, frame, style, picture)
+
+
+@dataclass(slots=True)
+class _Prepared:
+    """A plan's content compiled for the panel: what it shows and how it is delivered."""
+
+    arguments: dict[str, Any]
+    profile: DeviceProfile
+    headline: str
+    preview: dict[str, Any]
+    images: list[Image.Image]  # every frame the bundle plays, or the one banner
+    deliver: Callable[[bool, ProgressCallback | None], Awaitable[dict[str, Any]]]
+    warnings: list[str] = field(default_factory=list)
+    banner: bool = False
+
+
+def _arguments(noun: str, given: Mapping[str, Any]) -> dict[str, Any] | CallToolResult:
+    """A plan's arguments: its noun and every setting that noun reads, defaults filled in."""
+    if noun not in PLANS:
+        return _unknown("plan", noun)
+    names = PLANS[noun][0]
+    extra = sorted(set(given) - set(names))
+    if extra:
+        return _usage("plan", noun, f"does not take {', '.join(extra)}")
+    arguments: dict[str, Any] = {"noun": noun}
+    for name in names:
+        value = given.get(name, PLAN_DEFAULTS[name])
+        kind = type(PLAN_DEFAULTS[name])
+        if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
+            return _usage("plan", noun, f"{name} must be a {kind.__name__}, not {value!r}")
+        arguments[name] = value
+    return arguments
+
+
+def _still_text_width(text: str, profile: DeviceProfile, foreground: str, background: str) -> int:
+    """How wide a static text frame's lettering is before the panel's edges cut it off."""
+    probe = render_static_text(
+        text,
+        max(profile.width, 16 * len(text)),
+        profile.height,
+        foreground=foreground,
+        background=background,
+    )
+    blank = Image.new("RGB", probe.size, parse_color(background))
+    box = ImageChops.difference(probe, blank).getbbox()
+    return 0 if box is None else box[2] - box[0]
+
+
+def _bundle_preview(bundle: FrameBundle) -> dict[str, Any]:
+    first = Image.frombytes("RGB", (bundle.width, bundle.height), bundle.frames[0])
+    return {
+        "width": bundle.width,
+        "height": bundle.height,
+        "frame_count": len(bundle.frames),
+        "duration_ms": sum(bundle.frame_durations_ms),
+        "first_frame": text_preview(first),
+    }
+
+
+def _banner_preview(banner: Image.Image) -> dict[str, Any]:
+    """The banner the panel's firmware scrolls, as text, cut to MAX_BANNER_PREVIEW columns."""
+    shown = banner.crop((0, 0, min(banner.width, MAX_BANNER_PREVIEW), banner.height))
+    preview: dict[str, Any] = {
+        "width": banner.width,
+        "height": banner.height,
+        "banner": text_preview(shown),
+    }
+    if shown.width < banner.width:
+        preview["banner_shown"] = f"the first {shown.width} of {banner.width} columns"
+    return preview
+
+
+def _prepare(arguments: dict[str, Any]) -> _Prepared | CallToolResult:
+    """Compile a plan's content for the configured panel."""
+    noun = arguments["noun"]
     profile = _profile()
-    studio = PixelAnimationStudio(profile.width, profile.height)
-    budget = _frame_budget(profile)
-    try:
-        if noun == "text":
-            if not value:
-                return _usage("render", noun, "needs value")
-            bundle = studio.create_text_bundle(
-                value,
-                scroll=scroll,
-                foreground=foreground,
-                background=background,
-                max_frames=budget if scroll else None,
+    runtime = ProtocolRuntime(profile)
+    panel = profile.panel_id
+    if noun == "text" and arguments["scroll"]:
+        text, speed = arguments["value"], arguments["speed"]
+        if not text:
+            return _usage("plan", noun, "needs value")
+        if not USER_SCROLL_SPEED_MIN <= speed <= USER_SCROLL_SPEED_MAX:
+            return _usage("plan", noun,
+                          f"speed must be {USER_SCROLL_SPEED_MIN}-{USER_SCROLL_SPEED_MAX}")
+        try:
+            banner = render_wide_text(
+                text,
+                profile.height,
+                foreground=arguments["foreground"],
+                background=arguments["background"],
             )
-        elif noun == "pattern":
-            if value not in PATTERNS:
-                return _usage("render", noun, f"value must be one of {', '.join(PATTERNS)}")
-            bundle = {
-                "test": studio.create_test_pattern_bundle,
-                "checker": studio.create_checker_bundle,
-                "two-frame": studio.create_two_frame_bundle,
-            }[value]()
-        else:
-            if not path:
-                return _usage("render", noun, "needs path")
-            if not Path(path).is_absolute():
-                return _usage("render", noun, f"path must be absolute, not {path!r}")
-            if not Path(path).exists():
-                return _fail({"error": f"File not found: {path}"})
-            if noun == "bundle":
-                bundle = FrameBundle.load(path)
-            else:
-                if fit not in FIT_MODES:
-                    return _usage("render", noun, f"fit must be one of {', '.join(FIT_MODES)}")
-                if dither not in DITHERS:
-                    return _usage("render", noun, f"dither must be one of {', '.join(DITHERS)}")
-                if noun == "image":
-                    bundle = studio.create_image_bundle(path, fit_mode=FIT_MODES[fit], dither=dither)
-                elif scroll:
-                    bundle = studio.create_scrolling_gif_bundle(
-                        path,
-                        max_frames=budget,
-                        background=background,
-                        dither=dither,
-                        key_color=key_color or None,
-                    )
-                else:
-                    bundle = studio.create_gif_bundle(
-                        path,
-                        max_frames=budget,
-                        fit_mode=FIT_MODES[fit],
-                        background=background,
-                        dither=dither,
-                        key_color=key_color or None,
-                    )
-    except (ValueError, OSError) as exc:
-        return _fail({"error": f"render {noun}: {exc}"})
-    return _rendered(noun, bundle, frame, style)
+        except ValueError as exc:
+            return _fail({"error": f"plan {noun}: {exc}"})
+
+        def deliver_banner(execute: bool, progress: ProgressCallback | None):
+            return runtime.play_native_text(
+                text,
+                banner.tobytes(),
+                banner.width,
+                speed=speed,
+                mode=MODE_LEFT,
+                execute=execute,
+                progress=progress,
+            )
+
+        return _Prepared(
+            arguments=arguments,
+            profile=profile,
+            headline=f"Scroll {text!r} on {panel} with the panel's own scroll at speed {speed}",
+            preview=_banner_preview(banner),
+            images=[banner.crop((0, 0, min(banner.width, MAX_BANNER_PREVIEW), banner.height))],
+            deliver=deliver_banner,
+            banner=True,
+        )
+
+    settings = {name: value for name, value in arguments.items() if name not in ("noun", "speed")}
+    bundle = _compile("plan", noun, profile, **settings)
+    if isinstance(bundle, CallToolResult):
+        return bundle
+
+    def deliver_bundle(execute: bool, progress: ProgressCallback | None):
+        return runtime.upload_frame_bundle(bundle, execute=execute, progress=progress)
+
+    subject = Path(arguments["path"]).name if arguments.get("path") else {
+        "text": repr(arguments.get("value")),
+        "draw": "the drawing",
+        "scene": "the scene",
+        "pattern": f"the {arguments.get('value')} pattern",
+    }[noun]
+    count = len(bundle.frames)
+    headline = (
+        f"Show {subject} on {panel} as a still"
+        if count == 1
+        else f"Play {subject} on {panel}, {count} frames in a "
+             f"{sum(bundle.frame_durations_ms)} ms loop"
+    )
+    warnings = []
+    if noun == "text":
+        width = _still_text_width(
+            arguments["value"], profile, arguments["foreground"], arguments["background"]
+        )
+        if width > profile.width:
+            warnings.append(f"the text is {width} pixels wide but the panel is {profile.width}, "
+                            "so a still cuts it off; scroll=true scrolls it instead")
+    return _Prepared(
+        arguments=arguments,
+        profile=profile,
+        headline=headline,
+        preview=_bundle_preview(bundle),
+        images=bundle.to_images(),
+        deliver=deliver_bundle,
+        warnings=warnings,
+    )
+
+
+def _steps(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each payload a delivery writes, in order, with its transfer once it ran."""
+    if "transfers" in result:
+        encoded = result["encoded"]
+        return [
+            {"step": sent["step"], "encoded": encoded[sent["step"]], "transfer": sent["transfer"]}
+            for sent in result["transfers"]
+        ]
+    steps = [{"step": "frames", "encoded": result["encoded"], "transfer": result["transfer"]}]
+    steps += [
+        {"step": label, **after}
+        for label, after in result.items()
+        if label not in ("encoded", "transfer")
+    ]
+    return steps
+
+
+def _plan_id(profile: DeviceProfile, steps: list[dict[str, Any]]) -> str:
+    """Name the exact bytes a send writes and the panel it writes them to."""
+    packets = [[step["step"], step["encoded"]["packets_hex"]] for step in steps]
+    payload = json.dumps([profile.panel_id, profile.device_id, packets])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _seconds_per_packet(profile: DeviceProfile) -> float | None:
+    """The panel's steady upload rate the CLI remembers, if it has uploaded before."""
+    try:
+        rates = json.loads(
+            (default_render_cache_dir() / "upload-rates.json").read_text(encoding="utf-8")
+        )
+        rate = float(rates[profile.device_id])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return rate if rate > 0 else None
+
+
+def _step_summary(step: dict[str, Any]) -> dict[str, Any]:
+    meta = step["encoded"].get("metadata", {})
+    summary: dict[str, Any] = {"step": step["step"], "packets": step["encoded"]["packet_count"]}
+    if isinstance(meta.get("opcode"), int):
+        summary["opcode"] = f"0x{meta['opcode']:02x}"
+    if meta.get("frame_count"):
+        summary["frames"] = meta["frame_count"]
+    if meta.get("payload_bytes"):
+        summary["payload_bytes"] = meta["payload_bytes"]
+    if "command" in meta:
+        summary["command"] = f"{meta['command']} {meta.get('value_encoded')}"
+    return summary
+
+
+def _transfer(profile: DeviceProfile, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    """What a send writes, step by step, and about how long its packets take."""
+    packets = sum(step["encoded"]["packet_count"] for step in steps)
+    rate = _seconds_per_packet(profile)
+    return {
+        "steps": [_step_summary(step) for step in steps],
+        "packets": packets,
+        "bytes": sum(step["encoded"]["total_bytes"] for step in steps),
+        "estimated_upload_seconds": max(1, round(packets * rate)) if rate else None,
+    }
+
+
+_plans: OrderedDict[str, dict[str, Any]] = OrderedDict()
+
+
+def _remember(plan_id: str, arguments: dict[str, Any]) -> None:
+    """Keep a plan's arguments so accept can find them from its plan_id alone."""
+    _plans[plan_id] = arguments
+    _plans.move_to_end(plan_id)
+    while len(_plans) > MAX_REMEMBERED_PLANS:
+        _plans.popitem(last=False)
+
+
+async def _planned(prepared: _Prepared) -> dict[str, Any]:
+    """The plan for prepared content: a dry run of its delivery, named by plan_id."""
+    blockers = [] if _execute else [READ_ONLY_BLOCKER]
+    try:
+        steps = _steps(await prepared.deliver(False, None))
+    except CodecError as exc:
+        steps = []
+        blockers.insert(0, f"the profile cannot encode this: {exc}")
+    plan_id = _plan_id(prepared.profile, steps) if steps else None
+    if plan_id:
+        _remember(plan_id, prepared.arguments)
+    transfer = _transfer(prepared.profile, steps) if steps else None
+    summary = prepared.headline
+    if transfer:
+        summary += f": {transfer['packets']} packets"
+        if transfer["estimated_upload_seconds"]:
+            summary += f", about {transfer['estimated_upload_seconds']} s to upload"
+    return {
+        "verb": "plan",
+        "noun": prepared.arguments["noun"],
+        "summary": summary,
+        "blockers": blockers,
+        "warnings": prepared.warnings,
+        "preview": prepared.preview,
+        "transfer": transfer,
+        "plan_id": plan_id,
+        "next": None if blockers else {"verb": "accept", "arguments": {"plan_id": plan_id}},
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def plan(
+    noun: Annotated[str, _noun("plan", "What to send; omit to list the nouns.")] = "",
+    value: Value = "",
+    path: FilePath = "",
+    scroll: Annotated[bool, Field(description="text: scroll it with the panel's own firmware scroll. animation: travel across the panel host-side.")] = False,
+    speed: Annotated[int, Field(description=f"text with scroll: {USER_SCROLL_SPEED_MIN}-{USER_SCROLL_SPEED_MAX}, higher is faster.")] = 8,
+    foreground: Foreground = "white",
+    background: Background = "black",
+    fit: Fit = "contain",
+    dither: Dither = "",
+    key_color: KeyColor = "",
+    frame_ms: FrameMs = 0,
+    scene: Scene = None,
+    frame: Annotated[str, Field(description=f"Which frames the picture shows: N, N-M, all, or a comma-separated list of those, such as 0,8,16,24,32, at most {MAX_FRAMES_PER_CALL}; omit for {MAX_FRAMES_PER_CALL} spread evenly across the loop. It changes nothing that is sent.")] = "",
+    picture: Annotated[bool, Field(description="Also return what the panel would show as a picture, each frame of a loop labeled with its index; turn off for a client that cannot show images.")] = True,
+) -> dict[str, Any]:
+    """CoolLED panel: compile content into the exact packets a send would write,
+    without sending. Returns what the panel would show (as a picture and as
+    text), the transfer, any blockers and warnings, and a plan_id; next holds
+    the accept call that sends it. Call with no noun for the list of nouns and
+    their arguments."""
+    if not noun:
+        return _listing("plan")
+    if noun not in PLANS:
+        return _unknown("plan", noun)
+    settings = {
+        "value": value,
+        "path": path,
+        "scroll": scroll,
+        "speed": speed,
+        "foreground": foreground,
+        "background": background,
+        "fit": fit,
+        "dither": dither,
+        "key_color": key_color,
+        "frame_ms": frame_ms,
+        "scene": scene or {},
+    }
+    arguments = _arguments(noun, {name: settings[name] for name in PLANS[noun][0]})
+    if isinstance(arguments, CallToolResult):
+        return arguments
+    prepared = _prepare(arguments)
+    if isinstance(prepared, CallToolResult):
+        return prepared
+    if prepared.banner and frame:
+        return _usage("plan", noun,
+                      "a scrolling text plan shows its one banner, so frame does not apply")
+    try:
+        indexes = select_frames(frame, len(prepared.images))
+    except ValueError as exc:
+        return _usage("plan", noun, str(exc))
+    planned = await _planned(prepared)
+    if not picture:
+        return planned
+    if prepared.banner:
+        return _shown(planned, prepared.images)
+    planned["preview"] = {**planned["preview"], "pictured_frames": indexes}
+    shown = [prepared.images[i] for i in indexes]
+    return _shown(planned, shown, _labels(indexes, len(prepared.images)))
+
+
+@dataclass(slots=True)
+class _Upload:
+    """One accepted plan on its way to the panel."""
+
+    plan_id: str
+    summary: str
+    started: float = field(default_factory=time.monotonic)
+    delivered: int = 0
+    total: int = 0
+    finished: float | None = None
+    outcome: dict[str, Any] | None = None
+    task: asyncio.Task[None] | None = None
+
+    def progress(self, delivered: int, total: int) -> None:
+        self.delivered, self.total = delivered, total
+
+    def report(self) -> dict[str, Any]:
+        elapsed = (self.finished or time.monotonic()) - self.started
+        report = {"plan_id": self.plan_id, "summary": self.summary, "seconds": round(elapsed, 1)}
+        if self.outcome is None:
+            return {"state": "uploading", **report,
+                    "packets_delivered": self.delivered, "packets_total": self.total}
+        return {**self.outcome, **report}
+
+
+_upload: _Upload | None = None
+
+
+def _sent(step: dict[str, Any]) -> dict[str, Any]:
+    """How one step of a real send went."""
+    transfer = step["transfer"]
+    if transfer is None:
+        return {"step": step["step"], "success": False,
+                "note": "not sent: the upload before it did not finish"}
+    return {
+        "step": step["step"],
+        "success": transfer["success"],
+        "packets": transfer["packet_count"],
+        "acks": transfer["acks_received"],
+        "ack_timeouts": transfer["ack_timeouts"],
+        "errors": transfer["errors"],
+    }
+
+
+async def _send(upload: _Upload, prepared: _Prepared) -> None:
+    """Deliver an accepted plan, keeping how it ended for describe upload."""
+    try:
+        steps = [_sent(step) for step in _steps(await prepared.deliver(True, upload.progress))]
+        state = "sent" if all(step["success"] for step in steps) else "failed"
+        upload.outcome = {"state": state, "steps": steps}
+    except Exception as exc:  # an upload left running in the background has no caller to raise to
+        upload.outcome = {"state": "failed", "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        upload.finished = time.monotonic()
+
+
+@mcp.tool(annotations=SENDS)
+async def accept(
+    plan_id: Annotated[str, Field(description="The plan_id a plan returned.")] = "",
+    arguments: Annotated[dict[str, Any] | None, Field(description=f"Only for a plan this server no longer remembers (it keeps the last {MAX_REMEMBERED_PLANS} and forgets them on restart): the plan's noun and settings.")] = None,
+) -> dict[str, Any]:
+    """CoolLED panel: send a plan to the panel. Pass the plan_id from a plan's
+    next: accept plans the same content again and refuses if the packets
+    differ from the ones plan_id names, or if the server was started without
+    --execute. A long upload carries on in the background, and describe upload
+    follows it. Call with no arguments for this usage."""
+    global _upload
+    if not plan_id:
+        if arguments:
+            return _fail({"error": "accept needs the plan_id that plan returned", **ACCEPT_USAGE})
+        return dict(ACCEPT_USAGE)
+    if not _execute:
+        return _fail({"error": READ_ONLY_BLOCKER})
+    if arguments is None:
+        arguments = _plans.get(plan_id)
+        if arguments is None:
+            return _fail({"error": f"this server has no plan {plan_id}: it keeps the last "
+                                   f"{MAX_REMEMBERED_PLANS} and forgets them on restart, so plan again"})
+    given = dict(arguments)
+    planned_arguments = _arguments(str(given.pop("noun", "")), given)
+    if isinstance(planned_arguments, CallToolResult):
+        return planned_arguments
+    prepared = _prepare(planned_arguments)
+    if isinstance(prepared, CallToolResult):
+        return prepared
+    planned = await _planned(prepared)
+    if planned["blockers"]:
+        return _fail({"error": "the plan is blocked", "blockers": planned["blockers"]})
+    if planned["plan_id"] != plan_id:
+        return _fail({
+            "error": f"these arguments now plan {planned['plan_id']}, not {plan_id}: something "
+                     "changed since that plan, so review this one before accepting it",
+            "plan": planned,
+        })
+    if _upload is not None and _upload.outcome is None:
+        return _fail({"error": "another upload is still running; describe upload follows it",
+                      "upload": _upload.report()})
+    upload = _Upload(plan_id=plan_id, summary=planned["summary"])
+    upload.task = asyncio.create_task(_send(upload, prepared))
+    _upload = upload
+    try:
+        await asyncio.wait_for(asyncio.shield(upload.task), ACCEPT_WAIT_SECONDS)
+    except TimeoutError:
+        pass
+    report = upload.report()
+    if upload.outcome is None:
+        return {**report, "next": {"verb": "describe", "arguments": {"noun": "upload"}}}
+    return _fail(report) if report["state"] == "failed" else report
 
 
 def main() -> None:
-    global _profile_path
-    parser = argparse.ArgumentParser(description="coolled-verbs: a read-only MCP render surface.")
+    global _profile_path, _execute
+    parser = argparse.ArgumentParser(
+        description="coolled-verbs: an MCP surface that renders for the panel and, "
+        "with --execute, sends to it."
+    )
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
-    _profile_path = parser.parse_args().profile
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Let accept send planned uploads to the panel over BLE; "
+        "without it the server only renders and plans.",
+    )
+    args = parser.parse_args()
+    _profile_path, _execute = args.profile, args.execute
     mcp.run()
 
 

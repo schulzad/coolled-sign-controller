@@ -1,0 +1,24 @@
+First drawing: account.
+
+The piece: a ringed gas giant rising over the horizon of a small airless moon, 384x384 in the panel's 8 colours, with a lander and one astronaut at lower left, a small moon, a moonlet crossing the planet's polar hood with its shadow beside it, and the planet's shadow cutting the rings. 257 placements of 34 sprites, a 245,757-byte scene file. 25 looks: 8 of the whole, 17 of regions.
+
+How it went, in order:
+- The coarse level was where most of the looks went, and every coarse problem was about light, not shape. The sun moved three times: too high above the ring plane (the rings' shadow swallowed the planet's lower face), then too far round on the left (the planet's shadow blanked the back ring), then right, low and in front. None of that showed as "wrong lighting" in a picture; what showed was a muddy wedge and a missing ring, and trace_pixel plus a little geometry turned those into causes.
+- Every flaw the overview could not show, a region look did: the Bayer dot-screen ground, the lamp pool swallowing the lander, the windows vanishing into the foil, the ring gaps aliasing into specks, the storm placed 6 px off its belt. At 2 px per pixel I could judge composition and nothing finer.
+- Twice I saw something without understanding it: the dark wedge and the specks along the ring. Both times trace_pixel gave the cause in one call. Once it was the other way round: I could not see the footprints in a 7 px look, and the trace showed they were all there. Detection and diagnosis really are separate steps.
+- The rulers did real work. The storm went in at coordinates I had estimated from a coarser look and missed its belt; the rulers in the next look gave the belt's actual line, and the fix was one edit.
+- The diff earned its place too: after the first hand-painting it showed changes in exactly three boxes, so I knew nothing had touched the planet by accident, and after clearing the buried stars it showed 0 pixels changed.
+
+Brushes against hand: 98.2% of the lit pixels came from baked layers (planet, night side, rings, shadows, ground, craters, pool, moons), 1.3% from 21 hand-painted sprites (1,483 characters), 0.6% from stars a brush scattered. The hand-painted 1.3% carries most of the story: the figures, the weather, the shadows of small things, the horizon rims. I never edited a baked row by hand. The 225-character rows of the planet were too wide to edit, so I painted over them with small sprites; "the rows are the painter's now" held in principle, but the unit of editing was the small overlay. A cell-level edit by coordinate is what would make the baked rows truly editable.
+
+Smallest scale at which single pixels still read for me: 4 px per pixel read cleanly, dither patterns included; 2 px did not. So legible_px is 3 or 4, and the leaf size at a 1024 px budget is about 256.
+
+How much of the scene file I had to read at once: none of it whole. At 246 KB it was never opened; I worked from the looks, the traces, the hidden list, grep for anchors, and the file's own structure (one placement per line, hand sprites before baked ones). Hand edits were inserts at known anchors.
+
+What the workspace lacked:
+- A cell-level edit: set these cells of that sprite, by canvas coordinate, so baked rows can be edited instead of painted over.
+- Removing a sprite or a placement was a script each time; the plan_edit operations would cover it.
+- The brushes' "one sprite and one placement" contract did not fit scatter: 220 stars as 220 placements, noted once at scene level instead of on each placement.
+- Re-baking a block-in in place (the ground, the craters, the pool) was the most-used brush operation, and the design only describes adding.
+
+Whether the pictures were visible to me: yes, every look came back as a picture I could see, the 1016-pixel region looks sharp enough to read single pixels at 4 px per pixel.

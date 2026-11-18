@@ -3,14 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from opensign.contracts import FrameBundle
 
 from .render import threshold_to_panel
 from .studio import PixelAnimationStudio
+
+# A contact sheet's label: the band it takes above its frame, and its lettering size.
+LABEL_HEIGHT = 22
+LABEL_FONT_SIZE = 16
 
 
 def scale_frame(image: Image.Image, *, scale: int = 16, grid: bool = False) -> Image.Image:
@@ -27,6 +32,37 @@ def scale_frame(image: Image.Image, *, scale: int = 16, grid: bool = False) -> I
         for y in range(0, enlarged.height + 1, scale):
             draw.line((0, y, enlarged.width - 1, y), fill=(48, 48, 48))
     return enlarged
+
+
+def contact_sheet(
+    images: Sequence[Image.Image],
+    *,
+    scale: int = 8,
+    gap: int = 6,
+    labels: Sequence[str] | None = None,
+) -> Image.Image:
+    """Frames as the panel lights them, scaled up on a pixel grid and stacked top to bottom,
+    each under its own label in a band of LABEL_HEIGHT when labels are given."""
+    if not images:
+        raise ValueError("a contact sheet needs at least one frame")
+    if labels is not None and len(labels) != len(images):
+        raise ValueError(
+            f"a contact sheet needs one label per frame, not {len(labels)} for {len(images)}"
+        )
+    frames = [scale_frame(threshold_to_panel(image), scale=scale, grid=True) for image in images]
+    band = LABEL_HEIGHT if labels else 0
+    height = sum(frame.height + band for frame in frames) + gap * (len(frames) - 1)
+    sheet = Image.new("RGB", (max(frame.width for frame in frames), height), (64, 64, 64))
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default(size=LABEL_FONT_SIZE) if labels else None
+    top = 0
+    for index, frame in enumerate(frames):
+        if labels:
+            draw.text((4, top + 2), labels[index], fill=(224, 224, 224), font=font)
+            top += band
+        sheet.paste(frame, (0, top))
+        top += frame.height + gap
+    return sheet
 
 
 def _expanded_loop(bundle: FrameBundle, images: list[Image.Image]) -> tuple[list[Image.Image], list[int]]:
@@ -103,7 +139,7 @@ def terminal_preview(image: Image.Image) -> str:
     return "\n".join(lines)
 
 
-# One character per panel colour (1 bit per channel), keyed by (red, green, blue) on/off.
+# One character per panel color (1 bit per channel), keyed by (red, green, blue) on/off.
 TEXT_LEGEND: dict[tuple[bool, bool, bool], str] = {
     (False, False, False): ".",
     (True, False, False): "R",
@@ -120,10 +156,10 @@ TEXT_STYLES = ("auto", "color", "mono")
 def text_preview(image: Image.Image, *, style: str = "auto") -> str:
     """Render a frame as plain text, one character per pixel.
 
-    Each pixel snaps to the panel's 8 colours with the codec's ``>127``
+    Each pixel snaps to the panel's 8 colors with the codec's ``>127``
     threshold, so the grid shows what the panel would light. ``color`` writes
-    the colour letter (TEXT_LEGEND); ``mono`` writes ``#`` for any lit pixel;
-    ``auto`` picks ``mono`` when the frame lights at most one colour, which
+    the color letter (TEXT_LEGEND); ``mono`` writes ``#`` for any lit pixel;
+    ``auto`` picks ``mono`` when the frame lights at most one color, which
     keeps text legible, and ``color`` otherwise.
     """
     if style not in TEXT_STYLES:
@@ -139,6 +175,58 @@ def text_preview(image: Image.Image, *, style: str = "auto") -> str:
     ]
     width = image.width
     return "\n".join("".join(chars[y * width : (y + 1) * width]) for y in range(image.height))
+
+
+_LEGEND_RGB = {char: bytes(255 if on else 0 for on in key) for key, char in TEXT_LEGEND.items()}
+
+
+def _text_rows(text: str) -> list[str]:
+    """The rows of a frame written as text, trimmed, after checking they share one width."""
+    rows = [row.strip() for row in text.strip().splitlines()]
+    if not rows or not rows[0]:
+        raise ValueError("the drawing is empty")
+    width = len(rows[0])
+    for y, row in enumerate(rows, start=1):
+        if len(row) != width:
+            raise ValueError(f"row {y} is {len(row)} wide but row 1 is {width}; every row must be the same width")
+    return rows
+
+
+def image_from_text(
+    text: str,
+    *,
+    foreground: tuple[int, int, int] = (255, 255, 255),
+    colors: Mapping[str, tuple[int, int, int]] | None = None,
+) -> Image.Image:
+    """Read a frame written one character per pixel: the inverse of ``text_preview``.
+
+    ``.`` is off, a TEXT_LEGEND letter (either case) lights that color, ``#`` lights
+    ``foreground``, and ``colors`` gives any other letter a color or recolors a
+    legend one. Whitespace around a row is ignored, but every row must be the same
+    width, so a miscounted row is an error instead of a skewed picture.
+    """
+    rows = _text_rows(text)
+    palette = {**_LEGEND_RGB, **{key.upper(): bytes(rgb[:3]) for key, rgb in (colors or {}).items()}}
+    lit = bytes(foreground[:3])
+    letters = "".join(char for char in TEXT_LEGEND.values() if char != ".")
+    pixels = bytearray()
+    for y, row in enumerate(rows, start=1):
+        for x, char in enumerate(row, start=1):
+            rgb = lit if char == "#" else palette.get(char.upper())
+            if rgb is None:
+                raise ValueError(
+                    f"row {y}, column {x}: {char!r} is not in the legend; "
+                    f"use '.' for off, '#' for the foreground, or one of {letters}"
+                )
+            pixels += rgb
+    return Image.frombytes("RGB", (len(rows[0]), len(rows)), bytes(pixels))
+
+
+def mask_from_text(text: str) -> Image.Image:
+    """Which pixels a frame written as text draws: 255 for every one but ``.``, which is 0."""
+    rows = _text_rows(text)
+    covered = bytes(0 if char == "." else 255 for row in rows for char in row)
+    return Image.frombytes("L", (len(rows[0]), len(rows)), covered)
 
 
 def build_parser() -> argparse.ArgumentParser:

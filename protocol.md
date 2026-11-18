@@ -27,7 +27,7 @@ The values below are for the characterized reference panel (recorded in
 |---|---|---|---|
 | Panel ID | `desk-sign` | local label | User-provided scaffold name |
 | Physical dimensions | 64x16 | verified | Advertisement manufacturer data (2026-07-13); corrects the earlier 48x12 target |
-| Colour mode | 7-colour (mode 1) | verified | Manufacturer-data colour byte |
+| Color mode | 7-color (mode 1) | verified | Manufacturer-data color byte |
 | Advertised name | `CoolLEDX` (suffix DF7D) | verified | Scan after power-cycle (name broadcast only briefly at power-on) |
 | BLE identifier | MAC `ff:00:00:06:6f:82` (platform id `2810750F-…` on macOS) | verified | Scan + manufacturer data |
 | Firmware | 6 | verified | Manufacturer-data firmware byte |

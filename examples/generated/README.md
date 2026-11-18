@@ -47,3 +47,16 @@ done
 ```
 
 `--preview` skips BLE, so these are safe to regenerate without a panel.
+
+## Agent-drawn scenes (`scenes/`)
+
+Each scene in `examples/scenes/` compiles to a preview and a frame bundle here, through the same compositor as the MCP server's `scene` noun:
+
+```bash
+uv run python scripts/render_scenes.py
+
+# play one on the panel
+coolled send examples/generated/scenes/night-skyline.bundle.json
+```
+
+`tests/test_scene.py` checks that every scene still compiles to the frames of its committed bundle.

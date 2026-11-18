@@ -85,7 +85,7 @@ Module("DeviceProfileLedger") {
 
       Function("promote_status") {
         description: "Apply the transition rules: unverified->experimental needs at least one observed/experimental evidence entry; experimental->verified needs a live_hardware_test evidence entry; anything->rejected is always allowed and is terminal for that claim. Illegal jumps (e.g. unverified->verified) are refused."
-        metaphor: "Only re-labelling a piece once the paperwork earns it."
+        metaphor: "Only re-labeling a piece once the paperwork earns it."
         input_parameters: {
           claim_path: { type: "string", description: "Claim to move.", required: true },
           target_status: { type: "string", description: "experimental | verified | rejected.", required: true }
@@ -187,12 +187,12 @@ Module("DeviceProfileLedger") {
       }
 
       Function("derive_display_palette") {
-        description: "Translate the profile's decoded color_mode into the exact display palette the renderer must quantize to, keeping device colour knowledge in the ledger so it never leaks into PixelFramePipeline: mono (0) -> 2 states (off/on); seven-color (1) -> the 8 corners of the RGB cube (black + 7 primaries/secondaries); full-rgb (2) -> 24-bit, which the current 1-bit codec cannot represent and is therefore refused for that codec."
+        description: "Translate the profile's decoded color_mode into the exact display palette the renderer must quantize to, keeping device color knowledge in the ledger so it never leaks into PixelFramePipeline: mono (0) -> 2 states (off/on); seven-color (1) -> the 8 corners of the RGB cube (black + 7 primaries/secondaries); full-rgb (2) -> 24-bit, which the current 1-bit codec cannot represent and is therefore refused for that codec."
         metaphor: "Reading the accession card to hand the painter the exact tray of inks."
         input_parameters: { profile: { type: "object", description: "Profile with hardware.color_mode / frame_transfer.color_mode.", required: true } }
         output_format: {
-          palette: "array[rgb] Exact colours the panel can show.",
-          wire_color_states: "int Number of distinct colours (2 / 8 / 2^24)."
+          palette: "array[rgb] Exact colors the panel can show.",
+          wire_color_states: "int Number of distinct colors (2 / 8 / 2^24)."
         }
         implementation: |
           def derive_display_palette(profile):
@@ -207,11 +207,11 @@ Module("DeviceProfileLedger") {
       }
 
       Function("derive_effective_gamut") {
-        description: "Report the PERCEIVED gamut reachable by temporal frame-rate control, and the measured device fact that bounds it. Beyond the native single-frame palette (derive_display_palette), a fast subframe loop time-averages the native colours into a larger but luminance-limited volume between the palette corners (a 50% duty is ~half brightness; the channels are not perceptually matched, so it is a volume, not the full cube). This is only reachable while the loop is timed above the panel's flicker-fusion ceiling -- hardware.flicker_fusion_hz, measured ~62 Hz on this panel by scripts/flicker_probe.py -- which the ledger governs as an evidence-backed device fact exactly like the 30 KiB frame buffer. PixelFramePipeline.choose_fused_speed consumes this ceiling; temporal rendering is refused when it is unknown, never guessed."
+        description: "Report the PERCEIVED gamut reachable by temporal frame-rate control, and the measured device fact that bounds it. Beyond the native single-frame palette (derive_display_palette), a fast subframe loop time-averages the native colors into a larger but luminance-limited volume between the palette corners (a 50% duty is ~half brightness; the channels are not perceptually matched, so it is a volume, not the full cube). This is only reachable while the loop is timed above the panel's flicker-fusion ceiling -- hardware.flicker_fusion_hz, measured ~62 Hz on this panel by scripts/flicker_probe.py -- which the ledger governs as an evidence-backed device fact exactly like the 30 KiB frame buffer. PixelFramePipeline.choose_fused_speed consumes this ceiling; temporal rendering is refused when it is unknown, never guessed."
         metaphor: "Noting not just the inks in the tray but the shades the eye will blend from them if the plates spin fast enough -- and how fast that must be."
         input_parameters: { profile: { type: "object", description: "Profile with color_mode and hardware.flicker_fusion_hz.", required: true } }
         output_format: {
-          native_palette: "array[rgb] Single-frame colours (from derive_display_palette).",
+          native_palette: "array[rgb] Single-frame colors (from derive_display_palette).",
           flicker_fusion_hz: "float Measured ceiling a temporal loop must beat.",
           perceived_gamut: "string Luminance-limited volume between palette corners via duty cycle.",
           temporal_available: "bool True only when a measured fusion ceiling is on record."
@@ -273,8 +273,8 @@ Module("DeviceProfileLedger") {
           "unverified -> verified cannot be reached in one step; experimental is mandatory.",
           "verified requires a live_hardware_test evidence entry.",
           "static_image (0x03), stored_animation (0x04), and native_text_scroll (0x02) are independent claims: a verified static upload never implies verified animation or verified text scroll.",
-          "The display palette is derived from the decoded color_mode and handed to the renderer; device colour knowledge never lives in PixelFramePipeline.",
-          "The native single-frame palette and the temporal-FRC perceived gamut are distinct: the perceived volume is luminance-limited and time-averaged, never advertised as native single-frame colours.",
+          "The display palette is derived from the decoded color_mode and handed to the renderer; device color knowledge never lives in PixelFramePipeline.",
+          "The native single-frame palette and the temporal-FRC perceived gamut are distinct: the perceived volume is luminance-limited and time-averaged, never advertised as native single-frame colors.",
           "The flicker-fusion ceiling (hardware.flicker_fusion_hz) is a measured, evidence-backed device fact like the 30 KiB frame buffer; temporal rendering is timed above it where it can be (a request with too many subframes to be is warned about, not refused) and is refused when it is unknown.",
           "Discovery confidence is capped at 0.95 -- passive observation never yields certainty.",
           "Active write/notify characteristics are set by explicit decision, not by discovery.",
@@ -295,7 +295,7 @@ Module("DeviceProfileLedger") {
       - The status gate that codec selection (select_codec allow_experimental) enforces: allow_experimental=true admits verified+experimental (the runtime default, for dry-run and physical alike); allow_experimental=false is the opt-in verified-only + replay_safe gate.
       - Promotion of characteristic candidates to active write/notify UUIDs.
       - Per-mode frame_transfer governance: static_image (0x03), stored_animation (0x04), and native_text_scroll (0x02) as independent claims.
-      - Deriving the display palette (and wire colour-state count) from the decoded color_mode for the renderer.
+      - Deriving the display palette (and wire color-state count) from the decoded color_mode for the renderer.
       - Governing the flicker-fusion ceiling (hardware.flicker_fusion_hz) as a measured device fact, and the perceived (temporal-FRC) gamut vs the native palette.
     delegates: |
       - Producing raw candidates and decoded geometry to CoolLEDXDiscovery.
@@ -305,7 +305,7 @@ Module("DeviceProfileLedger") {
     verified_on_hardware: |
       - desk-sign profile: brightness (0x08) and static image (0x03) verified with cited live-test evidence; stored_animation (0x04) is verified (first displayed 2026-07-13; its 30 KiB payload limit was pinned 2026-08-15 with decoded acks: 79 frames at 64x16 accepted, 80 rejected with DATA_LENGTH_ERROR); frame_streaming rejected; power experimental; mode=left (0x06) and speed (0x07, higher=faster) verified 2026-07-14 via native scroll speed sweep.
       - native_text_scroll (0x02 wide banner + mode=left): scrolled on hardware 2026-07-14 (scripts/native_scroll_experiment.py) -- promote from experimental to verified once a live_hardware_test evidence entry is appended for the frame_transfer mode claim; speed/mode commands are already verified.
-      - Flicker-fusion ceiling measured ~62 Hz on the reference panel (2026-07-13, scripts/flicker_probe.py), enabling temporal-colour (FRC) rendering.
+      - Flicker-fusion ceiling measured ~62 Hz on the reference panel (2026-07-13, scripts/flicker_probe.py), enabling temporal-color (FRC) rendering.
     open_work: |
       - Append the native_text_scroll live_hardware_test evidence entry and promote the frame_transfer.modes.native_text_scroll claim.
       - schema/device_profile.schema.json exists but is not machine-checked anywhere (validation is the Python DeviceProfile.validate; nothing uses jsonschema, and CI runs pytest only): wire it into CI to validate profiles, and extend it with hardware.flicker_fusion_hz (evidence-cited) and native_text_scroll as a frame_transfer mode claim.
